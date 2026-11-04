@@ -1,0 +1,21 @@
+[package]
+name = "pokopia-setup"
+version = "0.1.1"
+description = "Console setup and play tool for the Pokopia PC port (no window, for Proton on the Steam Deck)"
+edition = "2021"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "pokopia-setup"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

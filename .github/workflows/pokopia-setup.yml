@@ -1,0 +1,46 @@
+name: pokopia-setup
+
+# Builds the console setup tool (launcher/cli) on Windows and publishes pokopia-setup.exe as a workflow artifact.
+# It contains no game code or data: it is the launcher's setup logic without the WebView2 window, for Proton / Steam Deck.
+on:
+  push:
+    paths:
+      - "launcher/cli/**"
+      - "launcher/src-tauri/src/**"
+      - ".github/workflows/pokopia-setup.yml"
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: launcher/cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test
+        run: cargo test --release
+      - name: Build
+        run: cargo build --release
+      - name: Smoke test
+        run: ./target/release/pokopia-setup.exe --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pokopia-setup-windows-x64
+          path: |
+            launcher/cli/target/release/pokopia-setup.exe
+            launcher/release/Setup.bat
+            launcher/release/deck/pokopia-deck.sh
+          if-no-files-found: error
+
+  linux-host-tests:
+    # The same code must keep building on Linux: pokopia-deck.sh users may build it there, and the cross build in docs/STEAM_DECK.md uses this.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: launcher/cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test
