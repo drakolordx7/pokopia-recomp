@@ -276,7 +276,7 @@ def link(runner, obj, game, env, gen):
             os.remove(a)
         objs = sorted(os.path.join(obj, name, f) for f in os.listdir(os.path.join(obj, name)) if f.endswith('.o'))
         rsp = os.path.join(obj, '%s.rsp' % name)
-        with open(rsp, 'w') as f:
+        with open(rsp, 'w', encoding='utf-8') as f:
             f.write('\n'.join('"%s"' % p.replace('\\', '/') for p in objs))
         rc, tail = runner.run([ZIG, 'ar', 'rcs', a, '@' + rsp], env=env)
         if rc != 0:
