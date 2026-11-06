@@ -8,8 +8,6 @@ use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const EXEFS_FILES: [&str; 5] = ["main", "sdk", "subsdk0", "rtld", "main.npdm"];
-
 #[derive(Serialize, Clone)]
 pub struct Check {
     pub label: String,
@@ -42,11 +40,11 @@ pub fn fwd(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
-fn check_candidate(kind: &str, version: &str, dir: &Path) -> Candidate {
+fn check_candidate(kind: &str, version: &str, dir: &Path, files: &[String]) -> Candidate {
     let exefs = dir.join("exefs");
     let romfs = dir.join("romfs");
     let mut checks = Vec::new();
-    for f in EXEFS_FILES {
+    for f in files {
         checks.push(Check { label: format!("exefs/{}", f), ok: exefs.join(f).is_file() });
     }
     checks.push(Check { label: "romfs/".to_string(), ok: romfs.is_dir() });
@@ -74,6 +72,13 @@ fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
 
 pub fn scan(path: &str) -> DumpReport {
     let root = PathBuf::from(path.trim());
+    // the exefs files and the example folder name come from the game manifest
+    let (files, example) = match crate::manifest::get() {
+        Ok(m) => (m.exefs_files(), m.dump.example_folder.clone()),
+        Err(e) => {
+            return DumpReport { path: fwd(&root), exists: root.is_dir(), errors: vec![e], candidates: Vec::new(), chosen: None };
+        }
+    };
     let mut report = DumpReport {
         path: fwd(&root),
         exists: root.is_dir(),
@@ -92,9 +97,10 @@ pub fn scan(path: &str) -> DumpReport {
     let base = root.join("base");
     let updates = root.join("updates");
     if !base.is_dir() && !updates.is_dir() {
-        report.errors.push(
-            "This folder has no base/ or updates/ subfolder. Pick the folder that contains them (for example Pokopia_v2.0.1a).".to_string(),
-        );
+        report.errors.push(format!(
+            "This folder has no base/ or updates/ subfolder. Pick the folder that contains them (for example {}).",
+            example
+        ));
         return report;
     }
 
@@ -109,19 +115,19 @@ pub fn scan(path: &str) -> DumpReport {
             .unwrap_or_default();
         versions.sort_by(|a, b| version_order(a, b));
         for v in versions {
-            report.candidates.push(check_candidate("update", &v, &updates.join(&v)));
+            report.candidates.push(check_candidate("update", &v, &updates.join(&v), &files));
         }
     }
     if base.is_dir() {
-        report.candidates.push(check_candidate("base", "", &base));
+        report.candidates.push(check_candidate("base", "", &base, &files));
     }
 
     report.chosen = report.candidates.iter().find(|c| c.ok).cloned();
     if report.chosen.is_none() {
-        report.errors.push(
-            "No usable game files found. Each of base/ or an updates/<version>/ folder needs exefs/ (main, sdk, subsdk0, rtld, main.npdm) and romfs/."
-                .to_string(),
-        );
+        report.errors.push(format!(
+            "No usable game files found. Each of base/ or an updates/<version>/ folder needs exefs/ ({}) and romfs/.",
+            files.join(", ")
+        ));
     }
     report
 }

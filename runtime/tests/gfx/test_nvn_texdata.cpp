@@ -323,10 +323,14 @@ NXTEST(sparse_texture_prepares_from_mapped_tiles) {
 NXTEST(untile_cube_and_cube_array) {
     no_cache();
     const TextureBuilderInfo cube = make_info(NVN_TEXTURE_TARGET_CUBEMAP, 64, 64, 0, 4, NVN_FORMAT_RGBA8);
-    const TextureBuilderInfo cube_array = make_info(NVN_TEXTURE_TARGET_CUBEMAP_ARRAY, 40, 40, 2, 3, NVN_FORMAT_RGBA8);
+    // NVN's cube-map array depth is the layer-face count, 6 per cube (layout 1d15fa0): two cubes are depth 12.
+    const TextureBuilderInfo cube_array = make_info(NVN_TEXTURE_TARGET_CUBEMAP_ARRAY, 40, 40, 12, 3, NVN_FORMAT_RGBA8);
     for (const TextureBuilderInfo& info : {cube, cube_array}) {
         Built bt;
-        CHECK_MSG(begin_block_linear(bt, info), "layout");
+        if (!begin_block_linear(bt, info)) {
+            CHECK_MSG(false, "layout");
+            continue;
+        }
         CHECK_EQ(bt.L.layers, info.target == NVN_TEXTURE_TARGET_CUBEMAP ? 6u : 12u);
         fill_random(bt.lin, 77);
         finish_block_linear(bt, info);
@@ -881,7 +885,7 @@ NXTEST(failures_return_false_without_crashing) {
     const TextureBuilderInfo bad[] = {
         make_info(NVN_TEXTURE_TARGET_2D, 16, 16, 1, 1, NVN_FORMAT_NONE),
         make_info(NVN_TEXTURE_TARGET_3D, 33, 33, 0, 1, NVN_FORMAT_RGBA8),
-        make_info(NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_RGBA8),
+        make_info(NVN_TEXTURE_TARGET_BUFFER, 0, 1, 1, 1, NVN_FORMAT_RGBA8),   // a buffer texture has a layout (Switch 2 start-up) but needs a width
         make_info(NVN_TEXTURE_TARGET_2D, 0, 16, 1, 1, NVN_FORMAT_RGBA8),
         make_info(NVN_TEXTURE_TARGET_2D_ARRAY, 16, 16, 0, 1, NVN_FORMAT_RGBA8),
     };

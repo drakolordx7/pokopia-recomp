@@ -513,18 +513,43 @@ bool resolve_stage_modules(const GraphicsKey& key, StageModules* out) {
     return true;
 }
 
+bool small_dynamic_conservative() {
+    static const bool on = config_get_bool("nvn", "small_dynamic", true) && device().features().conservative_raster_dynamic;
+    return on;
+}
+bool small_dynamic_fsr() {
+    static const bool on = config_get_bool("nvn", "small_dynamic", true) && device().features().fragment_shading_rate;
+    return on;
+}
+
+// The dynamic states of every graphics pipeline. The NVN2 smaller features add two groups when the device has them (nvn_small.h): the
+// conservative raster mode / overestimation size (VK_EXT_conservative_rasterization with extended dynamic state 3) and the fragment shading
+// rate (VK_KHR_fragment_shading_rate). Once a pipeline lists them, the replay sets them before the first draw of every pass
+// (set_dynamic_state). [nvn] small_dynamic = false leaves both out.
 const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state() {
-    static const VkDynamicState dyn[] = {
-        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
-        VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
-        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
-        VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
-        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
-        VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
-        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
-    static const VkPipelineDynamicStateCreateInfo dy = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0,
-                                                        sizeof(dyn) / sizeof(dyn[0]), dyn};
-    return &dy;
+    static const struct Dyn {
+        VkDynamicState s[32];
+        VkPipelineDynamicStateCreateInfo ci;
+        Dyn() {
+            const VkDynamicState base[] = {
+                VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT, VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT, VK_DYNAMIC_STATE_CULL_MODE, VK_DYNAMIC_STATE_FRONT_FACE,
+                VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                VK_DYNAMIC_STATE_DEPTH_COMPARE_OP, VK_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+                VK_DYNAMIC_STATE_STENCIL_OP, VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
+                VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE, VK_DYNAMIC_STATE_DEPTH_BIAS,
+                VK_DYNAMIC_STATE_BLEND_CONSTANTS, VK_DYNAMIC_STATE_DEPTH_BOUNDS, VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+                VK_DYNAMIC_STATE_STENCIL_WRITE_MASK, VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_LINE_WIDTH};
+            uint32_t n = 0;
+            for (VkDynamicState d : base) s[n++] = d;
+            if (small_dynamic_conservative()) {
+                s[n++] = VK_DYNAMIC_STATE_CONSERVATIVE_RASTERIZATION_MODE_EXT;
+                s[n++] = VK_DYNAMIC_STATE_EXTRA_PRIMITIVE_OVERESTIMATION_SIZE_EXT;
+            }
+            if (small_dynamic_fsr()) s[n++] = VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;
+            ci = {VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO, nullptr, 0, n, s};
+        }
+    } dyn;
+    return &dyn.ci;
 }
 
 VkPipelineCache pipeline_cache_handle() {

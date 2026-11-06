@@ -27,6 +27,7 @@
 #include "nxrt/memory.h"
 #include "nxrt/svc.h"
 #include "test_framework.h"
+#include "test_platform.h"
 
 NXTEST_GROUP(kernel_sync)
 
@@ -796,6 +797,34 @@ NXTEST(wait_synchronization_index_and_persistence) {
     CHECK_EQ(rc, ks::kInvalidHandle);
     CHECK_EQ(idx, -1);
     end();
+}
+
+// ---- 17b: timeouts under the Switch 2 profile --------------------------------------------------------------------------
+
+// The system tick is 31.25 MHz on Switch 2 (19.2 MHz on Switch 1) and kernel::tick_hz caches it at first use, so this runs in a child process that
+// picks the platform first. A wait timeout is counted in ticks: counted at the wrong rate it ends early (here after 61 ms of a 100 ms wait).
+NXTEST_CHILD(kernel_sync_switch2_timeouts) {
+    nxtest::use_platform_for_process(nxrt::game::Platform::Switch2);
+    if (ks::tick_hz() != ks::kTickHzSwitch2) return 10;
+    begin();
+    int rc = 0;
+    std::shared_ptr<ks::KEvent> e;
+    const uint32_t h = new_event(e, false);
+    int32_t idx = -1;
+    auto t0 = Clock::now();
+    if (wait_sync({h}, 100 * kMs, idx) != ks::kTimedOut) rc = 11;
+    if (!slept_at_least(ms_since(t0), 100.0)) rc = 12;          // WaitSynchronization timeout
+    alignas(4) uint32_t w = 4;
+    t0 = Clock::now();
+    if (ks::wait_for_address(addr_of(&w), 2, 4, 100 * kMs) != ks::kTimedOut) rc = 13;
+    if (!slept_at_least(ms_since(t0), 100.0)) rc = 14;          // WaitForAddress timeout
+    end();
+    return rc;
+}
+
+NXTEST(timeouts_run_in_real_time_under_switch2) {
+    const int rc = nxtest::run_child("kernel_sync_switch2_timeouts");
+    CHECK_MSG(rc == 0, "child kernel_sync_switch2_timeouts returned " + std::to_string(rc) + " (10 tick rate, 11/12 WaitSynchronization, 13/14 WaitForAddress)");
 }
 
 // ---- 17: WaitSynchronization timeouts ----------------------------------------------------------------------------------

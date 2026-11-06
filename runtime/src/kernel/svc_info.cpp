@@ -86,7 +86,7 @@ uint32_t get_info(uint32_t type, uint32_t handle, uint64_t sub, uint64_t& out) {
         case 9: out = 0; return kernel::kOk;                                  // ResourceLimit: no handle
         case 10: out = 0; return kernel::kOk;                                 // IdleTickCount (nxrt: no idle accounting)
         case 11: {                                                            // RandomEntropy, subtype 0..3
-            if (sub > 7) return kInvalidCombination;
+            if (sub > (game::info().platform == game::Platform::Switch2 ? 7u : 3u)) return kInvalidCombination;   // Switch 1: subtypes 0..3 (Switchbrew)
             uint64_t seed = static_cast<uint64_t>(config_get_int("process", "entropy_seed", static_cast<int64_t>(kEntropyDefaultSeed)));
             out = seed ^ (sub * kGoldenRatio64);
             return kernel::kOk;

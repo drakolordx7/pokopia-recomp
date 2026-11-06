@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- nxnative's Ryujinx shader front end (seedds/nxnative dm/third_party/ryujinx, MIT; see ../../licenses/LICENSE.nxnative.MIT and
+       LICENSE.Ryubing.MIT), compiled unmodified from the copy that scripts/setup_nxnative.ps1 stages into tools/shaders/third_party/nxnative.
+       Only its Ampere decoder tables and instruction emitters (Decoders/DecoderAmpere.cs, Decoders/AmpereOp.cs, Instructions/InstEmitAmpere*.cs)
+       are of interest; the whole translator is built because the emitters sit inside it. Internals are visible to the xcheck tool. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>Ryujinx.Graphics.Shader</AssemblyName>
+    <RootNamespace>Ryujinx.Graphics.Shader</RootNamespace>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <NxSrc>$(MSBuildThisFileDirectory)../../third_party/nxnative/src/</NxSrc>
+    <ShaderSrc>$(NxSrc)Ryujinx.Graphics.Shader/</ShaderSrc>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="$(NxSrc)Ryujinx.Common/Ryujinx.Common.csproj" />
+    <ProjectReference Include="$(NxSrc)Spv.Generator/Spv.Generator.csproj" />
+    <Compile Include="$(ShaderSrc)**/*.cs" Exclude="$(ShaderSrc)bin/**;$(ShaderSrc)obj/**" />
+    <EmbeddedResource Include="$(ShaderSrc)CodeGen/Glsl/HelperFunctions/*.glsl"
+                      LogicalName="Ryujinx.Graphics.Shader.CodeGen.Glsl.HelperFunctions.%(Filename)%(Extension)" />
+    <InternalsVisibleTo Include="xcheck" />
+  </ItemGroup>
+
+</Project>

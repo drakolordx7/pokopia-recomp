@@ -149,6 +149,22 @@ struct State {
     VkDescriptorSet sets[kRing] = {};
     uint32_t next = 0;
     Target color, depth, motion, output;
+    // the native-input path (temporal_evaluate_native): its own pipeline and targets
+    struct Native {
+        bool tried = false, ok = false;
+        VkDescriptorSetLayout set_layout = VK_NULL_HANDLE;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        VkPipeline pipe = VK_NULL_HANDLE;
+        VkDescriptorPool pool = VK_NULL_HANDLE;
+        VkDescriptorSet sets[kRing] = {};
+        uint32_t next = 0;
+        Target color, depth, motion, output;
+        bool have_prev = false;
+        uint64_t key = 0, evaluations = 0, resets = 0;
+        UpscaleMode mode = UpscaleMode::Off;
+        VkExtent2D render = {}, out = {};
+        std::chrono::steady_clock::time_point last_eval{};
+    } native;
 };
 State& st() {
     static State s;
@@ -532,6 +548,200 @@ VkImageView temporal_evaluate(void* gfx_device, VkCommandBuffer cb, VkImageView 
     s.have_prev = true;
     (void)mode_name;
     return s.output.img.view;
+}
+
+// ---- the native-input path ------------------------------------------------------------------------------------------------------------
+namespace {
+
+struct NativePush {
+    float xf[3][4];       // colour, depth, motion vectors: source texels per render pixel (xy), source corner (zw)
+    float size[2];
+    float mv_scale[2];
+    float depth_map[2];
+    float pad[2];
+};
+static_assert(sizeof(NativePush) == 80, "push block");
+
+bool init_native(State& s, gfx::Device& dev) {
+    State::Native& n = s.native;
+    if (n.tried) return n.ok;
+    n.tried = true;
+    VkDevice d = dev.device();
+    const VkDescriptorSetLayoutBinding b[6] = {
+        {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {3, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr},
+        {5, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr}};
+    VkDescriptorSetLayoutCreateInfo li = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    li.bindingCount = 6;
+    li.pBindings = b;
+    if (vkCreateDescriptorSetLayout(d, &li, nullptr, &n.set_layout) != VK_SUCCESS) return false;
+    VkPushConstantRange pcr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(NativePush)};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1;
+    pli.pSetLayouts = &n.set_layout;
+    pli.pushConstantRangeCount = 1;
+    pli.pPushConstantRanges = &pcr;
+    if (vkCreatePipelineLayout(d, &pli, nullptr, &n.layout) != VK_SUCCESS) return false;
+    VkShaderModuleCreateInfo mi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    mi.codeSize = sizeof(kTemporalNativeComp);
+    mi.pCode = kTemporalNativeComp;
+    VkShaderModule mod = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(d, &mi, nullptr, &mod) != VK_SUCCESS) return false;
+    VkComputePipelineCreateInfo ci = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    ci.stage = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_COMPUTE_BIT, mod, "main", nullptr};
+    ci.layout = n.layout;
+    const VkResult pr = vkCreateComputePipelines(d, VK_NULL_HANDLE, 1, &ci, nullptr, &n.pipe);
+    vkDestroyShaderModule(d, mod, nullptr);
+    if (pr != VK_SUCCESS) return false;
+    const VkDescriptorPoolSize ps[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3 * State::kRing}, {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 * State::kRing}};
+    VkDescriptorPoolCreateInfo pci = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    pci.maxSets = State::kRing;
+    pci.poolSizeCount = 2;
+    pci.pPoolSizes = ps;
+    if (vkCreateDescriptorPool(d, &pci, nullptr, &n.pool) != VK_SUCCESS) return false;
+    VkDescriptorSetLayout layouts[State::kRing];
+    std::fill(std::begin(layouts), std::end(layouts), n.set_layout);
+    VkDescriptorSetAllocateInfo ai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = n.pool;
+    ai.descriptorSetCount = State::kRing;
+    ai.pSetLayouts = layouts;
+    if (vkAllocateDescriptorSets(d, &ai, n.sets) != VK_SUCCESS) return false;
+    n.ok = true;
+    return true;
+}
+
+}  // namespace
+
+bool temporal_evaluate_native(void* gfx_device, VkCommandBuffer cb, const NativeTemporalFrame& f, NativeTemporalResult* r) {
+    const UpscaleMode mode = upscale_mode();
+    if (mode != UpscaleMode::Fsr3 && mode != UpscaleMode::Dlss && mode != UpscaleMode::Dlaa) return false;
+    if (!gfx_device || !cb || !r || !f.color.view || !f.depth.view || !f.motion.view || !f.render.width || !f.render.height || !f.out.width || !f.out.height)
+        return false;
+    State& s = st();
+    std::lock_guard<std::mutex> lk(s.mu);
+    gfx::Device& dev = *static_cast<gfx::Device*>(gfx_device);
+    if (!init_gpu(s, dev) || !init_native(s, dev)) {
+        if (!s.logged_backend_fail) {
+            s.logged_backend_fail = true;
+            NXLOG_E(kTag, "native input pass could not be created: the game's DLSS calls are upscaled plainly");
+        }
+        return false;
+    }
+    TemporalBackend* be = mode == UpscaleMode::Fsr3 ? temporal_ffx(gfx_device) : temporal_dlss(gfx_device, mode == UpscaleMode::Dlaa);
+    if (!be) return false;
+    State::Native& n = s.native;
+    if (!ensure(s, n.color, f.render, VK_FORMAT_R16G16B16A16_SFLOAT, "native colour") || !ensure(s, n.depth, f.render, VK_FORMAT_R32_SFLOAT, "native depth") ||
+        !ensure(s, n.motion, f.render, VK_FORMAT_R16G16_SFLOAT, "native motion") || !ensure(s, n.output, f.out, VK_FORMAT_R16G16B16A16_SFLOAT, "native output"))
+        return false;
+
+    // history: a new network, a size or mode change, the game's own reset, or a long gap (menus, loading)
+    bool reset = f.reset || !n.have_prev || n.key != f.history_key || mode != n.mode || f.render.width != n.render.width || f.render.height != n.render.height ||
+                 f.out.width != n.out.width || f.out.height != n.out.height;
+    const auto now = std::chrono::steady_clock::now();
+    const double ms = n.evaluations ? std::chrono::duration<double, std::milli>(now - n.last_eval).count() : 16.7;
+    if (ms > 250.0) reset = true;
+
+    // input pass
+    VkDevice d = dev.device();
+    const VkPipelineStageFlags2 any = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    const VkAccessFlags2 rw = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    for (Target* t : {&n.color, &n.depth, &n.motion}) {
+        barrier(cb, t->img.image, t->ready ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED, any, rw, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,
+                VK_ACCESS_2_SHADER_WRITE_BIT);
+        t->ready = true;
+    }
+    VkDescriptorSet set = n.sets[n.next];
+    n.next = (n.next + 1) % State::kRing;
+    VkDescriptorImageInfo ii[6] = {{s.nearest, f.color.view, f.color.layout},
+                                   {s.nearest, f.depth.view, f.depth.layout},
+                                   {s.nearest, f.motion.view, f.motion.layout},
+                                   {VK_NULL_HANDLE, n.color.img.view, VK_IMAGE_LAYOUT_GENERAL},
+                                   {VK_NULL_HANDLE, n.depth.img.view, VK_IMAGE_LAYOUT_GENERAL},
+                                   {VK_NULL_HANDLE, n.motion.img.view, VK_IMAGE_LAYOUT_GENERAL}};
+    VkWriteDescriptorSet w[6];
+    for (uint32_t i = 0; i < 6; ++i) {
+        w[i] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w[i].dstSet = set;
+        w[i].dstBinding = i;
+        w[i].descriptorCount = 1;
+        w[i].descriptorType = i < 3 ? VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        w[i].pImageInfo = &ii[i];
+    }
+    vkUpdateDescriptorSets(d, 6, w, 0, nullptr);
+    NativePush pc = {};
+    const NativeTemporalInput* in[3] = {&f.color, &f.depth, &f.motion};
+    for (int i = 0; i < 3; ++i) {
+        pc.xf[i][0] = in[i]->scale[0];
+        pc.xf[i][1] = in[i]->scale[1];
+        pc.xf[i][2] = static_cast<float>(in[i]->off[0]);
+        pc.xf[i][3] = static_cast<float>(in[i]->off[1]);
+    }
+    pc.size[0] = static_cast<float>(f.render.width);
+    pc.size[1] = static_cast<float>(f.render.height);
+    pc.mv_scale[0] = f.mv_scale[0];
+    pc.mv_scale[1] = f.mv_scale[1];
+    pc.depth_map[0] = f.depth_reversed ? 1.0f : -1.0f;
+    pc.depth_map[1] = f.depth_reversed ? 0.0f : 1.0f;
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, n.pipe);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, n.layout, 0, 1, &set, 0, nullptr);
+    vkCmdPushConstants(cb, n.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
+    vkCmdDispatch(cb, (f.render.width + 7) / 8, (f.render.height + 7) / 8, 1);
+    for (Target* t : {&n.color, &n.depth, &n.motion})
+        barrier(cb, t->img.image, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT, any, rw);
+    barrier(cb, n.output.img.image, n.output.ready ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED, any, rw, any, rw);
+    n.output.ready = true;
+
+    // the backend: no camera comes with the game's call, so the camera constants are neutral (DLSS super resolution and FSR 3 do not use them)
+    TemporalFrame tf;
+    tf.color = as_input(n.color);
+    tf.depth = as_input(n.depth);
+    tf.motion = as_input(n.motion);
+    tf.output = as_input(n.output);
+    tf.render = f.render;
+    tf.out = f.out;
+    static const int jsign = static_cast<int>(config_get_int("upscale", "jitter_sign", 0));   // the same debug switch as the camera path
+    tf.jitter_px[0] = (jsign & 1) ? -f.jitter_px[0] : f.jitter_px[0];
+    tf.jitter_px[1] = (jsign & 2) ? -f.jitter_px[1] : f.jitter_px[1];
+    tf.mv_scale[0] = static_cast<float>(f.render.width);   // the pass already wrote UV units
+    tf.mv_scale[1] = static_cast<float>(f.render.height);
+    tf.reset = reset;
+    tf.frame_ms = static_cast<float>(std::clamp(ms, 1.0, 100.0));
+    tf.near_z = 0.1f;
+    tf.far_z = 1000.0f;
+    tf.fov_y = 1.0f;
+    tf.aspect = static_cast<float>(f.render.width) / static_cast<float>(f.render.height);
+    tf.sharpness = upscale_sharpness();
+    for (int i = 0; i < 4; ++i) tf.view_to_clip[i * 5] = tf.clip_to_view[i * 5] = tf.clip_to_prev_clip[i * 5] = tf.prev_clip_to_clip[i * 5] = 1.0f;
+    tf.cam_right[0] = 1.0f;
+    tf.cam_up[1] = 1.0f;
+    tf.cam_fwd[2] = -1.0f;
+    if (n.evaluations == 0)
+        NXLOG_I(kTag, "%s on the game's own inputs: render %ux%u -> %ux%u, depth %s, motion vector scale %.3f %.3f, jitter %+.3f %+.3f px", be->name(), f.render.width,
+                f.render.height, f.out.width, f.out.height, f.depth_reversed ? "reversed" : "forward (reversed here)", static_cast<double>(f.mv_scale[0]),
+                static_cast<double>(f.mv_scale[1]), static_cast<double>(f.jitter_px[0]), static_cast<double>(f.jitter_px[1]));
+    if (!be->evaluate(cb, tf)) return false;
+    barrier(cb, n.output.img.image, VK_IMAGE_LAYOUT_GENERAL, any, VK_ACCESS_2_MEMORY_WRITE_BIT,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+            VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
+
+    n.resets += reset ? 1 : 0;
+    ++n.evaluations;
+    if (n.evaluations % 600 == 0)
+        NXLOG_I(kTag, "%s (game inputs): %llu frames, %llu history resets", be->name(), static_cast<unsigned long long>(n.evaluations),
+                static_cast<unsigned long long>(n.resets));
+    n.last_eval = now;
+    n.mode = mode;
+    n.render = f.render;
+    n.out = f.out;
+    n.key = f.history_key;
+    n.have_prev = true;
+    r->image = n.output.img.image;
+    r->view = n.output.img.view;
+    r->backend = be->name();
+    return true;
 }
 
 }  // namespace nxrt::extras

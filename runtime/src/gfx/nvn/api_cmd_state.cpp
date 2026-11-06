@@ -11,8 +11,7 @@
 //     the list does. A guest object that is not one of ours is recorded as null.
 //   * Values are stored as given (enum values unchanged). Float and int rectangles are copied as they are.
 //   * Functions the replay does not need to reproduce are accepted and record nothing: shader scratch memory, program
-//     subroutines, tiled cache, viewport swizzles, separate texture and sampler handles, conservative raster dilate and
-//     subpixel precision bias.
+//     subroutines, tiled cache, viewport swizzles, separate texture and sampler handles and subpixel precision bias.
 //   * BindCoverageModulationTable has no fields of its own: its record carries a zero P_U32 payload and the 16 floats as blob.
 // The layouts of the state objects are not read here, so no smo-recomp file was consulted for this family.
 #include <algorithm>
@@ -279,7 +278,12 @@ void nvnCommandBufferSetDepthClamp(NVNcommandBuffer* c, NVNboolean enable) { emi
 void nvnCommandBufferSetConservativeRasterEnable(NVNcommandBuffer* c, NVNboolean enable) {
     emit_u32(c, Op::SetConservativeRaster, static_cast<uint32_t>(enable));
 }
-void nvnCommandBufferSetConservativeRasterDilate(NVNcommandBuffer*, float) {}     // not recorded
+// Dilate (sdk 0x609FA0): ceil(dilate * 4) quarter pixels, 0..3. Recorded as an Op::Small; the replay turns it into the extra primitive
+// overestimation size when the device has VK_EXT_conservative_rasterization.
+void nvnCommandBufferSetConservativeRasterDilate(NVNcommandBuffer* c, float dilate) {
+    const P_Small p{static_cast<uint32_t>(SmallKind::ConservativeDilate), 0, dilate_to_quarters(dilate), 0, 0};
+    with_rec(c, [&](CmdList& l) { l.emit(Op::Small, p); });
+}
 void nvnCommandBufferSetSubpixelPrecisionBias(NVNcommandBuffer*, int, int) {}     // not recorded
 void nvnCommandBufferSetPrimitiveRestart(NVNcommandBuffer* c, NVNboolean enable, int index) {
     const P_PrimitiveRestart p{static_cast<uint32_t>(enable), static_cast<uint32_t>(index)};

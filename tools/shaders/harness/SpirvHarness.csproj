@@ -12,6 +12,11 @@
     <AssemblyName>spirv_harness</AssemblyName>
     <RootNamespace>SpirvHarness</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Many translator threads allocate hard: one GC heap per core, no background GC, no DATAS shrinking the heap count.
+         The runtime's on-demand worker caps the heaps with DOTNET_GCHeapCount. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <GCDynamicAdaptationMode>0</GCDynamicAdaptationMode>
   </PropertyGroup>
 
   <ItemGroup>

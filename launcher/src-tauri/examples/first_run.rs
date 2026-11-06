@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The launcher's whole first-run setup without the window (release check of model b):
-//!   cargo run --release --example first_run -- <game dir> <exefs> <romfs> <tools dir> [shader limit] [jobs]
-//! Builds pkp.exe from the dump (gamebuild.rs) and then the shader cache (shaders.rs), the same code Set up runs.
+//!   cargo run --release --example first_run -- <game dir> <exefs> <romfs> <tools dir> <exe name> <runtime lib> [shader limit] [jobs]
+//! (exe name and runtime lib as the manifest has them: pkg exe "x.exe", import library "x_rt.lib"; the example does not read game.toml)
+//! Builds the game exe from the dump (gamebuild.rs) and then the shader cache (shaders.rs), the same code Set up runs.
 //! Prints each phase's time.
 
 #[path = "../src/gamebuild.rs"]
@@ -15,13 +16,13 @@ use std::time::Instant;
 
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
-    if a.len() < 4 {
-        eprintln!("usage: first_run <game dir> <exefs> <romfs> <tools dir> [shader limit] [jobs]");
+    if a.len() < 6 {
+        eprintln!("usage: first_run <game dir> <exefs> <romfs> <tools dir> <exe name> <runtime lib> [shader limit] [jobs]");
         std::process::exit(2);
     }
     let game = PathBuf::from(&a[0]);
     let tools_dir = PathBuf::from(&a[3]);
-    let jobs: usize = a.get(5).and_then(|x| x.parse().ok()).unwrap_or(4);
+    let jobs: usize = a.get(7).and_then(|x| x.parse().ok()).unwrap_or(4);
     let cancel = AtomicBool::new(false);
     let fail = |e: String| -> ! {
         eprintln!("error: {}", e);
@@ -44,8 +45,8 @@ fn main() {
             last = msg.to_string();
         }
     };
-    if !gamebuild::is_built(&game) {
-        let tools = gamebuild::find_tools(&tools_dir).unwrap_or_else(|e| fail(e));
+    if !gamebuild::is_built(&game, &a[4]) {
+        let tools = gamebuild::find_tools(&tools_dir, &a[5]).unwrap_or_else(|e| fail(e));
         let job = gamebuild::Job { game_dir: game.clone(), exefs: PathBuf::from(&a[1]), jobs };
         match gamebuild::run(&job, &tools, &cancel, |t| tick(&t.phase, &t.message)) {
             Ok(true) => {}
@@ -58,7 +59,7 @@ fn main() {
         game_dir: game.clone(),
         romfs: PathBuf::from(&a[2]),
         main: PathBuf::from(&a[1]).join("main"),
-        limit: a.get(4).and_then(|x| x.parse().ok()).unwrap_or(0),
+        limit: a.get(6).and_then(|x| x.parse().ok()).unwrap_or(0),
         jobs,
     };
     if let Err(e) = shaders::run(&job, &tools, &cancel, |p| tick(&p.phase, &p.message)) {

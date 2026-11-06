@@ -34,6 +34,8 @@ project venv (`tools\.venv`) for the scripts.
 
 ## Use
 
+Hardware oracle per ALU instruction (GPU vs our translation): `dotnet run --project tools\shaders\hwcheck -c Release`, see `hwcheck/README.md`.
+
 Input is a folder of extracted blocks in Wonder's layout: `manifest.tsv` (columns `id stage code_off code_size ctrl_off
 ctrl_size program_start program_bytes const_off const_size code_sha1_16 code_file ctrl_file`), `code_<hash>.bin` (the code
 block, SPH at `program_start`) and `ctrl_<hash>.bin` (the NVN control section; the harness reads +0x6f8/+0x6fc/+0x700
@@ -43,6 +45,12 @@ program length and constant data, +0x708 start, +0x714 stage, +0x748 work group,
 dotnet tools\shaders\build\bin\Release\net10.0\spirv_harness.dll --batch <corpus> --out <out> --jobs 8 [--host desktop|moltenvk] [--target-env vulkan1.3] [--no-retry]
 dotnet tools\shaders\build\bin\Release\net10.0\spirv_harness.dll <code.bin> <ctrl.bin> -o x.spv [--glsl]
 ```
+
+`spirv_harness --serve --cache <spirv dir> [--corpus <dir>] [--jobs N] [--priority below|idle|normal]` is the long-lived form the
+launcher's setup and the runtime's on-demand translation use: requests on stdin (`C <hash>` corpus block, `T <hash> <code b64> <ctrl b64>`,
+`P <priority>`, `E` end), answers on stdout (`R<TAB><results.tsv row>` once the `.spv` and the row are in the cache, `X <hash> <reason>`).
+Protocol and the rules for two writers on one cache: `harness/Serve.cs`. The project uses server GC (one heap per core; the runtime caps
+it with `DOTNET_GCHeapCount`).
 
 Output: `<hash>.spv`, `results.tsv` (hash, group, stage, status, spirv-val result, bound resources in Maxwell and Vulkan
 terms, translator messages, draw-time queries) and `summary.txt`. The binding scheme is Ryujinx's Vulkan one (set 0

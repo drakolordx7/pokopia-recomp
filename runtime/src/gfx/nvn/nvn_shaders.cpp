@@ -22,6 +22,9 @@
 #include <sstream>
 #include <unordered_set>
 
+#include <immintrin.h>
+#include <intrin.h>
+
 #include <nxrt/ftrace.h>
 #include <nxrt/config.h>
 #include <nxrt/gauge.h>
@@ -39,6 +42,53 @@ inline uint32_t rd32(const uint8_t* p) {
     uint32_t v;
     std::memcpy(&v, p, 4);  // little-endian host (arm64, x86-64), like the Switch
     return v;
+}
+
+// The SHA instructions (Intel since Ice Lake / Alder Lake, AMD since Zen): the same digest as block() at several times the speed. The
+// shader cache keys on this hash, and the game hashes every stage of every program it links (over a second of the boot on the portable
+// loop). Intrinsics, no inline assembly; chosen at run time from CPUID.
+bool have_shani() {
+    static const bool yes = [] {
+        int r[4];
+        __cpuid(r, 0);
+        if (r[0] < 7) return false;
+        __cpuidex(r, 1, 0);
+        const bool sse41 = (r[2] >> 19) & 1, ssse3 = (r[2] >> 9) & 1;
+        __cpuidex(r, 7, 0);
+        return sse41 && ssse3 && ((r[1] >> 29) & 1);
+    }();
+    return yes;
+}
+
+template <int F>
+__attribute__((target("sha,sse4.1,ssse3"))) inline __m128i rnds4(__m128i abcd, __m128i wk) { return _mm_sha1rnds4_epu32(abcd, wk, F); }
+
+__attribute__((target("sha,sse4.1,ssse3"))) void sha1_blocks_shani(uint32_t h[5], const uint8_t* data, size_t blocks) {
+    const __m128i kSwap = _mm_set_epi64x(0x0001020304050607ll, 0x08090a0b0c0d0e0fll);
+    __m128i abcd = _mm_shuffle_epi32(_mm_loadu_si128(reinterpret_cast<const __m128i*>(h)), 0x1B);
+    __m128i e0 = _mm_set_epi32(static_cast<int>(h[4]), 0, 0, 0);
+    for (; blocks; --blocks, data += 64) {
+        const __m128i abcd_save = abcd, e_save = e0;
+        __m128i m[4];
+        for (int i = 0; i < 4; i++) m[i] = _mm_shuffle_epi8(_mm_loadu_si128(reinterpret_cast<const __m128i*>(data + 16 * i)), kSwap);
+        __m128i eprev = e0;
+        for (int g = 0; g < 20; g++) {
+            const __m128i wk = g == 0 ? _mm_add_epi32(e0, m[0]) : _mm_sha1nexte_epu32(eprev, m[g & 3]);
+            eprev = abcd;
+            switch (g / 5) {   // the round function is an immediate
+                case 0: abcd = rnds4<0>(abcd, wk); break;
+                case 1: abcd = rnds4<1>(abcd, wk); break;
+                case 2: abcd = rnds4<2>(abcd, wk); break;
+                default: abcd = rnds4<3>(abcd, wk); break;
+            }
+            if (g + 4 < 20)   // W[4(g+4) ..] from the four groups before it; it takes m[g]'s slot, which this group has used
+                m[g & 3] = _mm_sha1msg2_epu32(_mm_xor_si128(_mm_sha1msg1_epu32(m[g & 3], m[(g + 1) & 3]), m[(g + 2) & 3]), m[(g + 3) & 3]);
+        }
+        e0 = _mm_sha1nexte_epu32(eprev, e_save);
+        abcd = _mm_add_epi32(abcd, abcd_save);
+    }
+    _mm_storeu_si128(reinterpret_cast<__m128i*>(h), _mm_shuffle_epi32(abcd, 0x1B));
+    h[4] = static_cast<uint32_t>(_mm_extract_epi32(e0, 3));
 }
 
 }  // namespace
@@ -73,6 +123,11 @@ void Sha1::update(const void* data, size_t size) {
         if (used_ < 64) return;
         block(buf_);
         used_ = 0;
+    }
+    if (size >= 64 && have_shani()) {
+        sha1_blocks_shani(h_, p, size / 64);
+        p += size & ~size_t{63};
+        size &= 63;
     }
     for (; size >= 64; p += 64, size -= 64) block(p);
     std::memcpy(buf_, p, size);
@@ -111,13 +166,13 @@ ShaderControl read_control(const uint8_t* control) {
     c.valid = rd32(control) == kShaderControlMagic;
     if (c.valid && rd32(control + 4) == 201) {
         // NVN2 (Switch 2) layout, from the game's GLSLC outputs (tools/shaders/docs/AMPERE.md section 3): program length +0x38,
-        // constants +0x3c/+0x40, code area +0x44, shared memory +0x50, stage u16 +0x56, compute work group +0x58.
+        // constants +0x3c/+0x40, code area +0x44, local memory +0x50 (not read), stage u16 +0x56, compute work group +0x58, shared memory +0x64.
         c.nvn2 = true;
         c.program_size = rd32(control + 0x38);
         c.const_size = rd32(control + 0x3c);
         c.const_offset = rd32(control + 0x40);
         c.code_size = rd32(control + 0x44);
-        c.shared_size = rd32(control + 0x50);
+        c.shared_size = rd32(control + 0x64);   // +0x50 is the local memory size (non-zero exactly when the SASS has LDL/STL)
         c.stage = static_cast<int>(*reinterpret_cast<const uint16_t*>(control + 0x56));
         c.program_start = 0;   // graphics: 0x80-byte SPH v4 at +0, instructions from +0x80; compute: instructions from +0
         if (c.stage == 5) {
@@ -1023,6 +1078,7 @@ void ShaderCache::flush_order(const std::string& lines) {
 }
 
 ShaderCache::~ShaderCache() {
+    if (worker_) worker_->stop();   // its reader thread calls add_record
     {
         std::lock_guard lk(pre_mu_);
         pre_stop_ = true;
@@ -1040,7 +1096,8 @@ namespace {
 void dump_missing_block(const std::string& hash, const uint8_t* code, const uint8_t* control, uint32_t code_size);
 }
 
-const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control) {
+const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control, FindMiss* miss) {
+    if (miss) *miss = FindMiss{};
     if (!code || !control) return nullptr;
     ShaderControl c = read_control(control);
     if (!c.valid || c.code_size == 0 || c.code_size > 16u << 20) {
@@ -1063,9 +1120,35 @@ const ShaderInfo* ShaderCache::find(const uint8_t* code, const uint8_t* control)
             }
         }
     }
+    if (miss) miss->hash = hash;
     if (!is_open) {   // no cache at all: every block is missing, and still goes to [nvn] dump_missing
         dump_missing_block(hash, code, control, c.code_size);
         return nullptr;
+    }
+    // On-demand translation: a block without a results.tsv record goes to the translator (a .spv without its record, which the launcher's
+    // setup may have written since this run read results.tsv, is translated again: it is the record that is missing). Until it answers the
+    // stage is pending; the caller skips what needs it.
+    if (!have_record && worker_) {
+        using St = ShaderTranslatorClient::State;
+        St st = worker_->state(hash);
+        if (st == St::Unknown && worker_->running()) {
+            NXFT("shader.ondemand_submit");
+            const uint32_t ctrl_bytes = c.nvn2 ? std::max<uint32_t>(0xd8, rd32(control + 0x30)) : 0x880;
+            worker_->submit(hash, code, c.code_size, control, ctrl_bytes);
+            st = worker_->state(hash);
+        }
+        if (st == St::Pending) {
+            if (miss) miss->pending = true;
+            return nullptr;
+        }
+        if (st == St::Done) {   // add_record put its row in before the state turned Done
+            std::lock_guard lk(lock_);
+            if (auto it = by_hash_.find(hash); it != by_hash_.end()) return it->second.get();
+            if (auto ln = lines_.find(hash); ln != lines_.end()) {
+                record = column_text(std::string_view(results_.data() + ln->second.first, ln->second.second), resources_col_);
+                have_record = true;
+            }
+        }
     }
     return load(hash, code, control, c.code_size, have_record ? &record : nullptr);
 }
@@ -1218,6 +1301,67 @@ void ShaderCache::release_stub_spirv(const ShaderInfo* s) {
     std::vector<uint32_t>().swap(it->second->spirv);
 }
 
+void ShaderCache::add_record(const std::string& hash, const std::string& row) {
+    if (row.empty()) return;
+    std::lock_guard lk(lock_);
+    if (!open_ || lines_.count(hash)) return;
+    const size_t off = results_.size();   // lines_ keeps offsets, so the string may move
+    results_ += row;
+    results_ += '\n';
+    lines_.emplace(hash, std::make_pair(off, row.size()));
+}
+
+namespace {
+std::string exe_folder_utf8();
+}
+
+bool ShaderCache::start_translator() {
+    if (!is_open() || worker_) return false;
+    std::string harness = nxrt::config_get_str("nvn", "shader_translator", "");
+    if (harness == "off" || harness == "0") {
+        NXLOG_I("nvn", "on-demand shader translation off ([nvn] shader_translator = off)");
+        return false;
+    }
+    std::error_code ec;
+    if (harness.empty()) {
+        const std::string exe = exe_folder_utf8();
+        if (!exe.empty()) harness = exe + "/tools/spirv_harness/spirv_harness.exe";
+    }
+    if (harness.empty() || !std::filesystem::is_regular_file(harness, ec)) {
+        NXLOG_I("nvn", "on-demand shader translation off: no translator at %s; blocks missing from the cache stay missing",
+                harness.empty() ? "<exe folder>/tools/spirv_harness/spirv_harness.exe" : harness.c_str());
+        return false;
+    }
+    ShaderTranslatorClient::Options opt;
+    opt.harness = harness;
+    opt.cache_dir = dir_;
+    std::string corpus = nxrt::config_get_str("nvn", "shader_corpus", "");
+    if (corpus.empty()) corpus = (std::filesystem::path(dir_).parent_path() / "corpus").string();
+    if (std::filesystem::is_regular_file(std::filesystem::path(corpus) / "unique_all.tsv", ec) ||
+        std::filesystem::is_regular_file(std::filesystem::path(corpus) / "unique.tsv", ec))
+        opt.corpus_dir = corpus;
+    const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
+    const int64_t def_jobs = std::clamp<int64_t>(hw / 2, 2, 8);
+    opt.jobs = static_cast<int>(std::clamp<int64_t>(nxrt::config_get_int("nvn", "shader_translate_jobs", def_jobs), 1, 64));
+    auto w = std::make_unique<ShaderTranslatorClient>();
+    std::string error;
+    const bool ok = w->start(
+        opt, [this](const std::string& hash, const std::string& row, bool) { add_record(hash, row); },
+        [](bool warn, const std::string& text) {
+            if (warn) NXLOG_W("nvn", "%s", text.c_str());
+            else NXLOG_I("nvn", "%s", text.c_str());
+        },
+        &error);
+    if (!ok) {
+        NXLOG_W("nvn", "on-demand shader translation off: %s", error.c_str());
+        return false;
+    }
+    worker_ = std::move(w);
+    NXLOG_I("nvn", "on-demand shader translation on: %s, %d jobs, corpus %s; draws and dispatches that need a block being translated are skipped",
+            harness.c_str(), opt.jobs, opt.corpus_dir.empty() ? "none (the block bytes alone)" : opt.corpus_dir.c_str());
+    return true;
+}
+
 const ShaderInfo* ShaderCache::find_by_hash(const std::string& hash) {
     std::lock_guard lk(lock_);
     auto it = by_hash_.find(hash);
@@ -1250,6 +1394,47 @@ static std::string exe_folder() {
 }
 
 namespace {
+std::string exe_folder_utf8() {
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    const std::u8string u = std::filesystem::path(buf).parent_path().u8string();
+    return std::string(u.begin(), u.end());
+}
+
+// Held open for the life of the process: the launcher's setup sees the game running (it cannot open the file for writing) and lowers its
+// own translation to idle priority. <cache dir>/../game_running.lock.
+void hold_game_lock(const std::string& cache_dir) {
+    static HANDLE h = INVALID_HANDLE_VALUE;
+    if (h != INVALID_HANDLE_VALUE) return;
+    const std::wstring p = (std::filesystem::path(cache_dir).parent_path() / "game_running.lock").wstring();
+    h = CreateFileW(p.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+}
+
+// A cache folder without results.tsv: with a translator the cache starts empty and fills while the game runs (header only, the format
+// spirv_harness writes).
+bool make_empty_cache(const std::string& dir) {
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream f(dir + "/results.tsv", std::ios::binary | std::ios::app);
+    if (!f) return false;
+    f.seekp(0, std::ios::end);
+    if (f.tellp() == 0)
+        f << "hash\tgroup\tstage\tstages_using\tstatus\tms\tspv_bytes\tresources\ttranslator_messages\terror\tdraw_time_queries\tglslc_reflection\n";
+    return static_cast<bool>(f);
+}
+
+bool translator_installed() {
+    const std::string configured = nxrt::config_get_str("nvn", "shader_translator", "");
+    if (configured == "off" || configured == "0") return false;
+    std::error_code ec;
+    if (!configured.empty()) return std::filesystem::is_regular_file(configured, ec);
+    const std::string exe = exe_folder_utf8();
+    return !exe.empty() && std::filesystem::is_regular_file(exe + "/tools/spirv_harness/spirv_harness.exe", ec);
+}
+}  // namespace
+
+namespace {
 // Gauges (nxrt/gauge.h) for the process cache. Declared after the cache in shader_cache(), so it is destroyed before the cache.
 struct ShaderCacheGauges {
     explicit ShaderCacheGauges(const ShaderCache& c) {
@@ -1268,9 +1453,16 @@ ShaderCache& shader_cache() {
     static ShaderCacheGauges gauges(cache);
     static std::once_flag once;
     std::call_once(once, [] {
+        auto opened = [](const std::string& dir) {
+            hold_game_lock(dir);
+            cache.start_translator();
+        };
+        const bool translator = translator_installed();
         std::string configured = nxrt::config_get_str("nvn", "shader_cache", "");
         if (!configured.empty()) {
-            cache.open(configured);  // logs its own failure
+            std::error_code ec;
+            if (translator && !std::filesystem::exists(configured + "/results.tsv", ec)) make_empty_cache(configured);
+            if (cache.open(configured)) opened(configured);  // logs its own failure
             return;
         }
         // The working directory first, then the folder of the executable.
@@ -1279,7 +1471,16 @@ ShaderCache& shader_cache() {
         for (const std::string& dir : candidates) {
             std::error_code ec;
             if (!std::filesystem::exists(dir + "/results.tsv", ec)) continue;
-            if (cache.open(dir)) return;
+            if (cache.open(dir)) {
+                opened(dir);
+                return;
+            }
+        }
+        // No cache yet (the setup has not translated anything): with a translator, start an empty one beside the executable.
+        if (std::string exe = exe_folder(); translator && !exe.empty() && make_empty_cache(exe + "/shader_cache/spirv") &&
+                                            cache.open(exe + "/shader_cache/spirv")) {
+            opened(exe + "/shader_cache/spirv");
+            return;
         }
         NXLOG_W("nvn", "no shader cache: set [nvn] shader_cache (NXRT_NVN_SHADER_CACHE) to a folder with results.tsv");
     });

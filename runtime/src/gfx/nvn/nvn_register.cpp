@@ -18,6 +18,9 @@ void register_all_impls() {
         register_api_cmdbuf();
         register_api_cmd_state();
         register_api_cmd_work();
+        register_api_device_cmds();
+        register_api_dlss();
+        register_api_small();
         register_api_device();
         register_api_memory();
         register_api_texture();

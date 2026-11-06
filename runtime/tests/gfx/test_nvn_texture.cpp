@@ -280,9 +280,19 @@ NXTEST(layout_packaged_block_height_and_rejects) {
     b.packaged_layout[0] = 7;               // out of the range smo accepts (0..4): the default rule is used
     CHECK_EQ(be::compute_texture_layout(b).storage_size, 2048u);
 
-    // Rejects: unknown format, buffer target, zero size, array without layers, linear stride too small.
+    // A buffer texture (Switch 2 games make small ones at start-up) is one tightly packed row of width texels, one level, not block-linear.
+    const TexLayout buf = be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_R8));
+    CHECK(buf.valid);
+    CHECK(!buf.block_linear);
+    CHECK_EQ(buf.levels, 1u);
+    CHECK_EQ(buf.layers, 1u);
+    CHECK_EQ(buf.pitch, 64u);
+    CHECK_EQ(buf.storage_size, 64u);
+    CHECK_EQ(buf.alignment, 0x20u);
+    CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_BUFFER, 0, 1, 1, 1, NVN_FORMAT_R8)).valid);   // a buffer texture still needs a width
+
+    // Rejects: unknown format, zero size, array without layers, linear stride too small.
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D, 4, 4, 1, 1, 0)).valid);
-    CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_R8)).valid);
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D, 0, 4, 1, 1, NVN_FORMAT_R8)).valid);
     CHECK(!be::compute_texture_layout(mk(NVN_TEXTURE_TARGET_2D_ARRAY, 4, 4, 0, 1, NVN_FORMAT_R8)).valid);
     TextureBuilderInfo lin = mk(NVN_TEXTURE_TARGET_2D, 100, 10, 1, 1, NVN_FORMAT_R8, NVN_TEXTURE_FLAGS_LINEAR);
@@ -499,10 +509,10 @@ NXTEST(initialize_getters_and_finalize) {
     CHECK_EQ(a.bget_class(&bld), 0);
     CHECK_EQ(a.bget_zcull(&bld), 0u);
     NVNtextureSparseTileLayout sparse{};
-    sparse.unknown0 = 9;
+    sparse.numTiledLevels = 9;
     sparse.tileWidth = 7;
     a.bget_sparse(&bld, &sparse);
-    CHECK_EQ(sparse.unknown0, 0);
+    CHECK_EQ(sparse.numTiledLevels, 0);
     CHECK_EQ(sparse.tileWidth, 128);   // a 64 KiB tile of 32-bit texels: 128 x 128
     CHECK_EQ(sparse.tileHeight, 128);
     CHECK_EQ(sparse.tileDepth, 1);
@@ -532,10 +542,10 @@ NXTEST(initialize_getters_and_finalize) {
     a.swizzle(&tex, &r, &g, &bl, &al);
     CHECK_EQ(static_cast<int>(r), static_cast<int>(NVN_TEXTURE_SWIZZLE_R));
     CHECK_EQ(static_cast<int>(al), static_cast<int>(NVN_TEXTURE_SWIZZLE_A));
-    sparse.unknown0 = 9;
+    sparse.numTiledLevels = 9;
     sparse.tileWidth = 7;
     a.sparse(&tex, &sparse);
-    CHECK_EQ(sparse.unknown0, 0);
+    CHECK_EQ(sparse.numTiledLevels, 0);
     CHECK_EQ(sparse.tileWidth, 128);
     CHECK_EQ(sparse.tileHeight, 128);
     CHECK_EQ(sparse.tileDepth, 1);
@@ -581,7 +591,7 @@ NXTEST(initialize_rejects_bad_builders) {
     a.bformat(&bld, NVN_FORMAT_RGBA8);                                    // no storage set: no pool
     CHECK_EQ(a.init(&tex, &bld), 0);
 
-    build(a, bld, pool, NVN_TEXTURE_TARGET_BUFFER, 64, 1, 1, 1, NVN_FORMAT_R8);            // buffer target has no layout
+    build(a, bld, pool, NVN_TEXTURE_TARGET_BUFFER, 0, 1, 1, 1, NVN_FORMAT_R8);            // a buffer texture of width 0 has no layout
     CHECK_EQ(a.init(&tex, &bld), 0);
     CHECK(be::host_of<be::Texture>(&tex) == nullptr);
 }

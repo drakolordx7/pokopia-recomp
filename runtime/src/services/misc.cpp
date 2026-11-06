@@ -934,8 +934,37 @@ std::shared_ptr<ipc::Service> make_streamplay_user() {
     return s;
 }
 
+// ---- chat:u (Switch 2 GameChat) -----------------------------------------------------------------------------------------------------
+// nn::chat::Initialize (the SDK of newer Switch 2 titles runs it at boot, e.g. Mario Kart World 1.8.0) opens "chat:u" and waits in sm until
+// the service exists; Eglantine NX2_NOTES rows 123-124. Cmd 0 opens a session the SDK keeps using, so it has to be an object; the session's
+// cmd 1 (u32 2 in) returns a copy handle the SDK waits on: an event that never fires (nobody is chatting). Every other command is not
+// implemented and is logged by the stub. The rest of GameChat's start-up (nn::chat::gsv::Initialize: GraphicsSupervisor 1201 / 1202,
+// then camera 601 / 602) is not answered yet: docs/switch2_services_xcheck.md rows 124-127.
+std::shared_ptr<ipc::Service> make_chat_session() {
+    auto ev = std::make_shared<ServiceEvent>(false);
+    return make_iface("chat:u session", [ev](Service& s) {
+        s.add_cmd(1, "GetEvent (Switch 2, name ours)", [ev](Request& req, Response& rsp) -> uint32_t {
+            NXLOG_I("chat", "chat:u session cmd 1 (arg %u): an event that never fires", req.arg<uint32_t>(0));
+            const uint32_t h = ev->new_handle();
+            if (!h) return kNotSupported;
+            rsp.out_copy.push_back(h);
+            return 0;
+        });
+    });
+}
+
+std::shared_ptr<ipc::Service> make_chat_user() {
+    auto s = std::make_shared<ipc::Service>("chat:u");
+    s->add_cmd(0, "OpenSession (Switch 2, name ours)", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+        rsp.push_object(make_chat_session());
+        return 0;
+    });
+    return s;
+}
+
 void register_misc() {
     add("stpl:u", [] { return make_streamplay_user(); });
+    add("chat:u", [] { return make_chat_user(); });
     add("csrng", [] { return make_csrng(); });
     add("ldr:ro", [] { return make_ro(); });
     add("mm:u", [] { return make_mm(); });

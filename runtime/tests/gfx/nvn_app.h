@@ -367,10 +367,12 @@ public:
         return idx;
     }
     // Presents window texture `idx` and returns what the renderer showed (the headless frame, RGBA8, width x height).
+    // A present is asynchronous ([nvn] present_ahead, default 1: the render thread draws it after the call returns), so the capture is waited for.
     bool present_and_capture(int idx, std::vector<uint8_t>* px) {
         uint32_t w = 0, h = 0;
         rend->capture_next_frame(px, &w, &h);
         api.nvnQueuePresentTexture(queue.get(), window.get(), idx);
+        for (int i = 0; i < 10000 && rend->capture_pending(); ++i) Sleep(1);   // up to 10 s
         return w == width && h == height && !px->empty();
     }
 

@@ -64,6 +64,35 @@ bool temporal_jitter_block(uint32_t* words, size_t n_words, uint32_t width, uint
 VkImageView temporal_evaluate(void* gfx_device, VkCommandBuffer cb, VkImageView color, VkImageView depth, VkImageLayout depth_layout, VkExtent2D render,
                               VkExtent2D out, bool depth_neg_one);
 
+// ---- a game that brings its own inputs (nvnCommandBufferEvaluateDlss, docs/S14.md "Native DLSS calls") ----------------------------------
+// The game's colour, depth and motion vectors are sampled by one compute pass into the pass's own images (same targets, same backends as the
+// camera-derived path above, but no camera is needed: DLSS and FSR 3 are given the game's jitter, motion vector scale and history reset).
+// Source texel of render pixel p in an input: floor((p + 0.5) * scale) + off, so rectangles (base offsets), differently sized motion vector
+// images and render-scaled textures are all one formula.
+struct NativeTemporalInput {
+    VkImageView view = VK_NULL_HANDLE;          // sampled view (colour; depth with the depth aspect), image in `layout`
+    VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    float scale[2] = {1.0f, 1.0f};
+    int32_t off[2] = {0, 0};
+};
+struct NativeTemporalFrame {
+    NativeTemporalInput color, depth, motion;
+    VkExtent2D render = {}, out = {};
+    float mv_scale[2] = {1.0f, 1.0f};           // the game's motion vector scale: its vectors times this are pixels of the render size
+    float jitter_px[2] = {};                    // the game's jitter offset in pixels
+    bool depth_reversed = true;                 // 1 is near (NVN network flag DepthInverted); false: the pass reverses it
+    bool reset = false;                         // the game's history reset
+    uint64_t history_key = 0;                   // names the network; a new key (or a re-initialised network) starts a new history
+};
+struct NativeTemporalResult {
+    VkImage image = VK_NULL_HANDLE;             // `out` large, RGBA16F, GENERAL layout, readable by compute, fragment and transfer after the recorded barrier
+    VkImageView view = VK_NULL_HANDLE;
+    const char* backend = "";
+};
+// Records the upscale into cb (outside any render pass) with the backend of [upscale] mode (fsr3, dlss, dlaa). False: nothing recorded (a
+// spatial or no mode, the SDK is not there, the GPU cannot): the caller upscales plainly.
+bool temporal_evaluate_native(void* gfx_device, VkCommandBuffer cb, const NativeTemporalFrame& f, NativeTemporalResult* r);
+
 // ---- backends --------------------------------------------------------------------------------------------------------------------
 // gfx_device: the gfx::Device. Null when the SDK cannot be loaded or the GPU does not support it (logged once).
 TemporalBackend* temporal_ffx(void* gfx_device);

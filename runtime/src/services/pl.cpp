@@ -284,6 +284,34 @@ std::shared_ptr<ipc::Service> make_pl(const char* name) {
         s.add_cmd(5, "GetSharedFontInOrderOfPriority", in_priority_order);
         // 6 GetSharedFontInOrderOfPriorityForSystem: the same answer ([4.0.0-15.0.1] in Switchbrew, ScarletNX and Ryujinx).
         s.add_cmd(6, "GetSharedFontInOrderOfPriorityForSystem", in_priority_order);
+        // Switch 2 SDKs (nn::pl::GetBuiltInFontData, Splatoon Raiders; Eglantine NX2_NOTES row 36) read the fonts as plain TrueType through two
+        // new commands instead of the BFTTF slots above. The shared memory already holds plain TTF, so both answer from it.
+        // 2000 GetBuiltInFontSharedMemory() -> u32 size to map, copy handle of the shared memory (mapped read-only).
+        s.add_cmd(2000, "GetBuiltInFontSharedMemory (Switch 2)", [](ipc::Request&, ipc::Response& rsp) -> uint32_t {
+            State& st = state();
+            uint32_t end = 0;
+            for (uint32_t i = 0; i < kFontCount; ++i) end = std::max(end, st.slot[i].offset + st.slot[i].size);
+            rsp.push<uint32_t>(std::min<uint32_t>(kSharedSize, std::max<uint32_t>(0x1000, (end + 0xFFF) & ~0xFFFu)));
+            rsp.out_copy.push_back(st.shm.new_handle());
+            return 0;
+        });
+        // 2010 GetBuiltInFontData(u8 SharedFontType, u8 flag (+2 padding bytes)) -> 24 bytes: u32 found at 0, then a descriptor at 8 of
+        // {u8 flags, u8 flag bit, u16, u32 offset into the 2000 memory, u32 size, u32}. Types are the SharedFontType values; an empty slot
+        // (no TTF found) or an unknown type answers "not found" with zeros.
+        s.add_cmd(2010, "GetBuiltInFontData (Switch 2)", [](ipc::Request& req, ipc::Response& rsp) -> uint32_t {
+            const uint32_t args = req.arg<uint32_t>(0);
+            const uint32_t type = args & 0xFF;
+            State& st = state();
+            const bool found = type < kFontCount && st.slot[type].size != 0;
+            NXLOG_D("pl", "GetBuiltInFontData(type %u, flag %u) -> %s", type, (args >> 8) & 1, found ? "found" : "not found");
+            rsp.push<uint32_t>(found ? 1 : 0);
+            rsp.push<uint32_t>(0);
+            rsp.push<uint32_t>(0);
+            rsp.push<uint32_t>(found ? st.slot[type].offset : 0);
+            rsp.push<uint32_t>(found ? st.slot[type].size : 0);
+            rsp.push<uint32_t>(0);
+            return 0;
+        });
     });
 }
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Starts pkp.exe, watches it, and reports how it ended.
+//! Starts the game exe (named by the manifest), watches it, and reports how it ended.
 
 use serde::Serialize;
 use std::path::Path;
@@ -7,9 +7,6 @@ use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 use tauri::{AppHandle, Emitter, Manager};
-
-/// Files the launcher may open for the user, by name, inside the game folder.
-pub const REPORT_FILES: [&str; 4] = ["pkp_crash.txt", "pkp_freeze.txt", "pkp_fatal.txt", "pkp.log"];
 
 #[derive(Serialize, Clone, Default)]
 pub struct ReportFile {
@@ -42,8 +39,8 @@ fn set_status(app: &AppHandle, s: Status) {
     let _ = app.emit("game-status", s);
 }
 
-fn report_files(dir: &Path, started: SystemTime) -> Vec<ReportFile> {
-    REPORT_FILES
+fn report_files(dir: &Path, started: SystemTime, names: &[String]) -> Vec<ReportFile> {
+    names
         .iter()
         .filter_map(|n| {
             let md = std::fs::metadata(dir.join(n)).ok()?;
@@ -60,23 +57,27 @@ pub fn start(app: &AppHandle, game_dir: &Path, minimize: bool) -> Result<(), Str
             return Err("The game is already running.".into());
         }
     }
-    let exe = game_dir.join("pkp.exe");
+    let m = crate::manifest::get()?;
+    let exe_name = m.files.exe.clone();
+    let log_name = m.files.log.clone();
+    let reports = m.report_files();
+    let exe = game_dir.join(&exe_name);
     if !exe.is_file() {
-        return Err(format!("pkp.exe was not found in {}. Put the launcher next to pkp.exe or set the game folder in Settings.", crate::dump::fwd(game_dir)));
+        return Err(format!("{0} was not found in {1}. Put the launcher next to {0} or set the game folder in Settings.", exe_name, crate::dump::fwd(game_dir)));
     }
 
     let mut cmd = Command::new(&exe);
-    // every path (exefs, romfs, shader cache) comes from pkp.ini next to pkp.exe
-    cmd.current_dir(game_dir).args(["--log", "pkp.log"]);
+    // every path (exefs, romfs, shader cache) comes from the game ini next to the exe
+    cmd.current_dir(game_dir).args(["--log", log_name.as_str()]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no stray console if pkp.exe is a console build
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no stray console if the exe is a console build
     }
     let started = SystemTime::now();
-    let mut child = cmd.spawn().map_err(|e| format!("Could not start pkp.exe: {}", e))?;
+    let mut child = cmd.spawn().map_err(|e| format!("Could not start {}: {}", exe_name, e))?;
 
-    set_status(app, Status { state: "running".into(), message: format!("pkp.exe started (process {})", child.id()), ..Default::default() });
+    set_status(app, Status { state: "running".into(), message: format!("{} started (process {})", exe_name, child.id()), ..Default::default() });
     if minimize {
         if let Some(w) = app.get_webview_window("main") {
             let _ = w.minimize();
@@ -91,14 +92,14 @@ pub fn start(app: &AppHandle, game_dir: &Path, minimize: bool) -> Result<(), Str
             Ok(s) => (s.code(), None),
             Err(e) => (None, Some(e.to_string())),
         };
-        let files = report_files(&dir, started);
-        let crash_file = files.iter().any(|f| f.fresh && f.name != "pkp.log");
+        let files = report_files(&dir, started, &reports);
+        let crash_file = files.iter().any(|f| f.fresh && f.name != log_name);
         let crashed = crash_file || code.map_or(true, |c| c != 0);
         let message = match (&wait_err, code) {
-            (Some(e), _) => format!("Lost track of pkp.exe: {}", e),
-            (None, Some(0)) => "pkp.exe exited normally.".to_string(),
-            (None, Some(c)) => format!("pkp.exe exited with code {} (0x{:08X}).", c, c as u32),
-            (None, None) => "pkp.exe was ended by the system.".to_string(),
+            (Some(e), _) => format!("Lost track of {}: {}", exe_name, e),
+            (None, Some(0)) => format!("{} exited normally.", exe_name),
+            (None, Some(c)) => format!("{} exited with code {} (0x{:08X}).", exe_name, c, c as u32),
+            (None, None) => format!("{} was ended by the system.", exe_name),
         };
         set_status(&app2, Status { state: "exited".into(), code, crashed, files, message });
         if minimize {

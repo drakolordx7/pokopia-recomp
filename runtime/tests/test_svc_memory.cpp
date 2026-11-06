@@ -415,7 +415,10 @@ NXTEST(map_physical_memory_commit_write_unmap) {
     CHECK_EQ(mi.type, kTypeAlias);
     CHECK_EQ(mi.size, 0x2000ull);
 
-    CHECK_EQ(svc(0x2C, addr, 0x2000).rc, kRcD401);  // second map of the same range
+    // MapPhysicalMemory is page granular like the console kernel's: a range that is mapped already succeeds and keeps its contents.
+    CHECK_EQ(svc(0x2C, addr, 0x2000).rc, 0u);
+    CHECK_EQ(*word_at(addr), 0x5A5Au);
+    CHECK_EQ(*word_at(addr + kPg), 0xA5A5u);
     CHECK_EQ(svc(0x2D, addr, 0x2000).rc, 0u);
     CHECK_EQ(touch(addr, false), 0);
 
@@ -431,7 +434,7 @@ NXTEST(map_physical_memory_errors) {
     CHECK_EQ(svc(0x2C, addr, 0).rc, kRcCa01);
     CHECK_EQ(svc(0x2C, addr, 0x800).rc, kRcCa01);
     CHECK_EQ(svc(0x2C, mem::kHeapBase, kPg).rc, kRcD401);  // outside the alias region
-    CHECK_EQ(svc(0x2D, addr, kPg).rc, kRcD401);            // never mapped
+    CHECK_EQ(svc(0x2D, addr, kPg).rc, 0u);                 // never mapped: unmap releases only the mapped pages, a free page is fine
     teardown();
 }
 

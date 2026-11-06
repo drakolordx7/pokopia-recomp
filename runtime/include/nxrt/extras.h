@@ -130,6 +130,8 @@ void hdr_refresh_levels();
 
 // The game's declarations (HdrMode::Native). Thread-safe; each call refreshes the levels and the swapchain metadata, and logs the native decision once.
 void hdr_note_layer_luminance(bool extended, unsigned min_nits, unsigned max_nits);
+// Set by the gfx library when it is linked (core code calls through it, so core links without gfx).
+extern void (*layer_luminance_sink)(bool extended, unsigned min_nits, unsigned max_nits);
 // color_space: the NVN2 value (-1 = not set); display: 10 floats (red, green, blue, white x/y, max, min luminance) or null; content: max CLL, max FALL or null.
 void hdr_note_window_hdr(int color_space, const float* display, const float* content);
 bool hdr_mode_native();

@@ -82,6 +82,10 @@ struct Frame {
     VkDescriptorSet alloc_set(VkDescriptorSetLayout layout);
 };
 
+// Splits the submission being recorded (nvn_gpu.cpp): runs what is recorded so far, waits for the GPU, and goes on in a fresh command buffer
+// (f.cb changes, the serial does not). Render thread only; false when it cannot. The caller ends its pass / queries first and re-binds after.
+bool frame_split(Frame& f);
+
 // Destruction: fn runs once every submission made so far (and the one being recorded) has completed.
 void defer_destroy(std::function<void()> fn);
 uint64_t completed_serial();      // cached timeline value; call poll_completed() for a fresh read

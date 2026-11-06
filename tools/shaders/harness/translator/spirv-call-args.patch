@@ -6,9 +6,21 @@ also turns off the global-to-storage-buffer pass. The Ryujinx code in the contex
 Second change: an assignment whose result is never read was deleted together with its operation, so atomics with
 an unused result (RED, ATOMS.POPC.INC to RZ) vanished from optimised output (only DebugMode kept them); assignments
 from atomics and calls now stay.
+Third change: a value read from memory (storage, shared, local, global, image) or returned by an atomic or a call was
+propagated into its single use even when a store, atomic, call or barrier came in between, which moved the read past the
+write ("x = buf[i]; buf[i] = y; use(x)" read the new value). Such a value is now propagated only into the next statements
+of the same block when nothing in between can write memory; otherwise it stays in its local. An atomic or call result
+is never propagated: the second change keeps its assignment, so propagating it ran the atomic twice (hwcheck: ATOMG.ADD
+returned the value after its own add and added twice).
 --- a/StructuredIr/AstOptimizer.cs
 +++ b/StructuredIr/AstOptimizer.cs
-@@ -29,7 +29,8 @@
+@@ -24,12 +24,13 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
+                     {
+                         bool isWorthPropagating = propVar.Uses.Count == 1 || IsWorthPropagating(assignment.Source);
+ 
+-                        if (propVar.Defs.Count == 1 && isWorthPropagating)
++                        if (propVar.Defs.Count == 1 && isWorthPropagating && !MovesMemoryAccess(assignment, propVar))
+                         {
                              PropagateExpression(propVar, assignment.Source);
                          }
  
@@ -18,19 +30,126 @@ from atomics and calls now stay.
                          {
                              visitor.Block.Remove(assignment);
  
-@@ -40,6 +41,11 @@
-             }
- 
+@@ -42,6 +43,118 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
              RemoveEmptyBlocks(mainBlock);
+         }
+ 
++        /// Propagating a value read from memory (or an atomic/call result) moves that access to its use. That is only safe when
++        /// nothing between the assignment and the use can write memory: the use must be a statement of the same block and no
++        /// statement in between may store, run an atomic, call, wait at a barrier or open a block. Otherwise "x = buf[i];
++        /// buf[i] = y; use(x)" read buf[i] after the store (hwcheck: LDG with the address register overwritten afterwards).
++        private static bool MovesMemoryAccess(AstAssignment assignment, AstOperand propVar)
++        {
++            // an atomic or a call is never folded into its use: its assignment stays (HasSideEffects), so folding it ran it twice
++            if (HasSideEffects(assignment.Source))
++            {
++                return true;
++            }
++
++            if (!ReadsMemory(assignment.Source))
++            {
++                return false;
++            }
++
++            if (propVar.Uses.Count != 1)
++            {
++                return true;
++            }
++
++            IAstNode use = propVar.Uses.First();
++
++            if (use.LLNode == null || use.Parent != assignment.Parent || assignment.LLNode == null)
++            {
++                return true;
++            }
++
++            for (LinkedListNode<IAstNode> n = assignment.LLNode.Next; n != null; n = n.Next)
++            {
++                if (n.Value == use)
++                {
++                    return false;
++                }
++
++                if (n.Value is AstBlock || WritesMemory(n.Value))
++                {
++                    return true;
++                }
++            }
++
++            return true;
++        }
++
++        private static bool ReadsMemory(IAstNode node)
++        {
++            if (node is not AstOperation op)
++            {
++                return false;
++            }
++
++            Instruction inst = op.Inst & Instruction.Mask;
++
++            if ((inst == Instruction.Load && IsMutableStorage(op.StorageKind)) || inst == Instruction.ImageLoad ||
++                inst.IsAtomic() || inst == Instruction.ImageAtomic || inst == Instruction.Call)
++            {
++                return true;
++            }
++
++            for (int index = 0; index < op.SourcesCount; index++)
++            {
++                if (ReadsMemory(op.GetSource(index)))
++                {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
++        private static bool WritesMemory(IAstNode node)
++        {
++            if (node is AstAssignment assignment)
++            {
++                node = assignment.Source;
++            }
++
++            if (node is not AstOperation op)
++            {
++                return false;
++            }
++
++            Instruction inst = op.Inst & Instruction.Mask;
++
++            if (inst == Instruction.Store || inst.IsAtomic() || inst.IsImageStore() || inst == Instruction.Call ||
++                inst == Instruction.Barrier || inst == Instruction.GroupMemoryBarrier || inst == Instruction.MemoryBarrier)
++            {
++                return true;
++            }
++
++            for (int index = 0; index < op.SourcesCount; index++)
++            {
++                if (WritesMemory(op.GetSource(index)))
++                {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
++        private static bool IsMutableStorage(StorageKind kind)
++        {
++            return kind is not (StorageKind.None or StorageKind.Input or StorageKind.InputPerPatch or StorageKind.ConstantBuffer);
 +        }
 +
 +        private static bool HasSideEffects(IAstNode source)
 +        {
 +            return source is AstOperation op && (op.Inst.IsAtomic() || op.Inst == Instruction.Call);
-         }
- 
++        }
++
          private static bool IsWorthPropagating(IAstNode source)
-@@ -69,6 +75,13 @@
+         {
+             if (source is not AstOperation srcOp)
+@@ -69,6 +182,13 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
                  }
                  else if (useNode is AstOperation useOperation)
                  {

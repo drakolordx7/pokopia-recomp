@@ -36,6 +36,9 @@ enum class Op : uint16_t {
     BeginXfb, EndXfb, PauseXfb, ResumeXfb,            // transform feedback: P_Counter (address = the control buffer)
     DrawXfb,                                          // DrawTransformFeedback: P_DrawXfb (draws what the control buffer's feedback section wrote)
     PushDebugGroup, PopDebugGroup,                    // debug labels, recorded only when the back end has VK_EXT_debug_utils: P_DebugGroup (+ blob: the name, NUL ended)
+    SubmitDeviceCommands,                             // nvnCommandBufferSubmitDeviceCommands: P_SubmitDeviceCommands (nvn_devcmd.h, docs/nvn2_device_commands.md)
+    EvaluateDlss,                                     // nvnCommandBufferEvaluateDlss (NVN2): P_EvaluateDlss, upscales the game's colour into its output at replay (api_dlss.cpp)
+    Small,                                            // push constants, shading rate, exclusive scissor, conservative raster: P_Small (nvn_small.h)
     Count
 };
 const char* op_name(Op op);
@@ -101,9 +104,30 @@ struct P_Counter { uint32_t type, pad; uint64_t address; };                     
 struct P_ReportValue { uint32_t value, pad; uint64_t address; };
 struct P_DrawXfb { uint32_t mode, pad; uint64_t control; };                                    // DrawTransformFeedback: the primitive and the feedback control buffer address
 struct P_DebugGroup { uint32_t id, length; };                                                  // PushDebugGroup (blob: length + 1 bytes) / PopDebugGroup (length 0)
+struct P_Small { uint32_t kind, a, b, c; uint64_t addr; };                                      // SmallKind (nvn_small.h) and its arguments; blob per kind
 struct P_Barrier { uint32_t bits, pad; };
+// EvaluateDlss: what nvnCommandBufferEvaluateDlss read from the NVNdlssNetwork and the NVNdlssParameters at record time (the game reuses both right
+// after the call). A texture the game did not set is null. `base` is the corner of the rectangle used in that texture (the *SubrectangleBase calls).
+struct DlssTex { Texture* tex; TextureViewInfo view; uint32_t has_view; int32_t base_x, base_y; uint32_t pad; };
+struct P_EvaluateDlss {
+    DlssTex color, depth, motion, output, bias, exposure;
+    int32_t in_w, in_h;                  // input rectangle (0, 0: the whole colour texture, as the SDK does)
+    int32_t out_w, out_h;                // the network's output size (nvnDlssNetworkResize); 0, 0: the whole output texture
+    float jitter[2], mv_scale[2];        // nvnDlssParametersSetJitterOffset / SetMotionVectorScale
+    float pre_exposure;
+    uint32_t reset;                      // history reset (low byte of nvnDlssParametersSetHistoryReset)
+    uint32_t eval_index;                 // nvnDlssParametersSetEvaluationIndex: the network's frame in flight (not needed, kept for traces)
+    uint32_t method, preset;             // the network's DLSS method and preset
+    uint32_t flags;                      // the builder flags (NGX feature flags: 1 HDR, 2 low-res motion vectors, 4 jittered motion vectors, 8 depth reversed, 0x40 auto exposure)
+    uint32_t serial;                     // changes when the network is initialised again (a new history)
+    uint64_t net;                        // the guest address of the network (names the history)
+};
 struct P_Sync { Sync* sync; uint32_t condition, flags; };                                      // FenceSync (condition, flags) / WaitSync
 struct P_Event { Event* event; uint32_t mode, location, index, value, pad; };                 // SignalEvent: mode (NVNeventSignalMode), location, index, value; WaitEvent: mode = NVNeventWaitMode, value
+struct P_SubmitDeviceCommands {                                                                // the replay reads the command words at stream_address and runs the draws in them
+    uint64_t stream_address, stream_size;     // GPU address of the command words (storage + 256) and their size in bytes
+    uint64_t compute_address, compute_size;   // the compute memory behind them (not decoded yet); 0 when the buffer has none
+};
 struct P_CallCommands { uint32_t count, copy; };                                               // blob: u64 handles[count]
 
 // ---- lists --------------------------------------------------------------------------------------------------------------------
@@ -185,6 +209,7 @@ struct CommandBuffer : Obj {
     // NVN2 nvnCommandBufferSetRecordingMode (the sdk keeps it at cmdbuf+0x18). It picks how the driver encodes the commands (a per-mode
     // header word ahead of each packet; a mode-2 buffer drops Barrier), not what they do, so the replay only keeps the value.
     int32_t recording_mode = 0;
+    uint64_t device_cmds_open = 0;    // NVN2 BeginDeviceCommands without its EndDeviceCommands yet: the GPU address of the device command buffer's storage (0: none)
     TexturePool* tpool = nullptr;     // the texture pool set in the list being recorded (the list holds it); background texture preparation resolves handles with it
     int64_t copy_row_stride = 0, copy_image_stride = 0;
     uint64_t callback = 0, callback_data = 0;       // guest function pointer and its data

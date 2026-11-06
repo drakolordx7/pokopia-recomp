@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Reads and edits the runtime's ini files next to pkp.exe. The key schema lives in the frontend;
+//! Reads and edits the runtime's ini files next to the game exe (the game ini named by the manifest, and controls.ini). The key schema lives in the frontend;
 //! this side only moves `section.key` values in and out, with the careful editor in ini.rs.
 
 use crate::ini::Ini;
@@ -8,21 +8,20 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const PKP_INI: &str = "pkp.ini";
 pub const CONTROLS_INI: &str = "controls.ini";
 
 #[derive(Serialize)]
 pub struct SettingsDump {
     pub game_dir: String,
-    pub pkp_exists: bool,
+    pub game_exists: bool,
     pub controls_exists: bool,
-    pub pkp: HashMap<String, String>,
+    pub game: HashMap<String, String>,
     pub controls: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
 pub struct Edit {
-    /// "pkp" or "controls"
+    /// "game" (the manifest's ini) or "controls"
     pub file: String,
     pub section: String,
     pub key: String,
@@ -39,22 +38,22 @@ fn map_of(ini: &Option<Ini>) -> HashMap<String, String> {
     ini.as_ref().map(|i| i.all().into_iter().collect()).unwrap_or_default()
 }
 
-pub fn file_for(dir: &Path, which: &str) -> Result<PathBuf, String> {
+pub fn file_for(dir: &Path, ini: &str, which: &str) -> Result<PathBuf, String> {
     match which {
-        "pkp" => Ok(dir.join(PKP_INI)),
+        "game" => Ok(dir.join(ini)),
         "controls" => Ok(dir.join(CONTROLS_INI)),
         other => Err(format!("unknown settings file '{}'", other)),
     }
 }
 
-pub fn read(dir: &Path) -> SettingsDump {
-    let pkp = load(&dir.join(PKP_INI));
+pub fn read(dir: &Path, ini: &str) -> SettingsDump {
+    let game = load(&dir.join(ini));
     let controls = load(&dir.join(CONTROLS_INI));
     SettingsDump {
         game_dir: crate::dump::fwd(dir),
-        pkp_exists: pkp.is_some(),
+        game_exists: game.is_some(),
         controls_exists: controls.is_some(),
-        pkp: map_of(&pkp),
+        game: map_of(&game),
         controls: map_of(&controls),
     }
 }
@@ -70,16 +69,16 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 
 /// Applies edits grouped per file. controls.ini is never created: the game writes it with its factory
 /// bindings on first run, and a file with only a few keys would lose them.
-pub fn apply(dir: &Path, edits: &[Edit]) -> Result<(), String> {
-    for which in ["pkp", "controls"] {
+pub fn apply(dir: &Path, ini_name: &str, edits: &[Edit]) -> Result<(), String> {
+    for which in ["game", "controls"] {
         let mine: Vec<&Edit> = edits.iter().filter(|e| e.file == which).collect();
         if mine.is_empty() {
             continue;
         }
-        let path = file_for(dir, which)?;
+        let path = file_for(dir, ini_name, which)?;
         let mut ini = match load(&path) {
             Some(i) => i,
-            None if which == "pkp" => Ini::empty(),
+            None if which == "game" => Ini::empty(),
             None => return Err(format!("{} does not exist yet. Start the game once so it creates it.", CONTROLS_INI)),
         };
         for e in mine {
@@ -90,10 +89,10 @@ pub fn apply(dir: &Path, edits: &[Edit]) -> Result<(), String> {
     Ok(())
 }
 
-/// Used by Play and setup: the ini keys the launcher owns. pkp.exe reads every path from pkp.ini (a pkp.ini next to it makes
+/// Used by Play and setup: the ini keys the launcher owns. The game exe reads every path from its ini (that ini next to it makes
 /// the game folder its working directory), so it needs no command-line paths.
-pub fn ensure_play_paths(dir: &Path, exefs: &str, romfs: &str) -> Result<(), String> {
-    let path = dir.join(PKP_INI);
+pub fn ensure_play_paths(dir: &Path, ini_name: &str, exefs: &str, romfs: &str) -> Result<(), String> {
+    let path = dir.join(ini_name);
     let mut ini = load(&path).unwrap_or_else(Ini::empty);
     let mut changed = !path.exists();
 

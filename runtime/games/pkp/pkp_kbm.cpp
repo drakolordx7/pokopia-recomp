@@ -608,7 +608,8 @@ void frame(::Ctx* c) {
                 if (ready) NXLOG_I(kTag, "kbm: glyph sprites found at game frame %u", s.frames);
             }
         }
-        if (ready) sync_glyphs_locked(s, keyboard);
+        // every glyph already found gets its icon now: the title draws (-) Settings while other sprites (sticks) are not loaded yet
+        sync_glyphs_locked(s, keyboard);
         if (keyboard && s.frames % 60 == 0) {
             if (s.title_px_icon != s.title_icon) {
                 s.title_px = title_pixels_locked(s, s.title_icon);

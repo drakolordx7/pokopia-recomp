@@ -2,10 +2,10 @@ import { api, esc, icon, refreshIcons, toast, errText } from '../util.js';
 
 /*
  * Settings schema. Key names come from nx/runtime/docs/CONFIG.md.
- *   file: "controls" (controls.ini), "pkp" (pkp.ini) or "config" (the launcher's own options)
+ *   file: "controls" (controls.ini), "game" (the game's ini, named by the manifest) or "config" (the launcher's own options)
  * Types: select, toggle, size, autonum, range, sens, path.
  */
-const SECTIONS = [
+const sectionsFor = (game) => [
   {
     title: 'Display', icon: 'monitor', file: 'controls',
     fields: [
@@ -21,7 +21,7 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'Audio', icon: 'volume-2', file: 'pkp',
+    title: 'Audio', icon: 'volume-2', file: 'game',
     fields: [{ id: 'volume', type: 'range', label: 'Master volume', sec: 'audio', key: 'volume', def: '1.0' }],
   },
   {
@@ -42,17 +42,17 @@ const SECTIONS = [
     ],
   },
   {
-    title: 'Paths', icon: 'folder', file: 'pkp',
+    title: 'Paths', icon: 'folder', file: 'game',
     fields: [
       { id: 'romfs', type: 'path', label: 'RomFS folder', sec: 'fs', key: 'romfs', def: '', hint: 'Set from your game files. Change it here only to override.' },
-      { id: 'save_dir', type: 'path', label: 'Save folder', sec: 'fs', key: 'save_dir', def: '', placeholder: 'save/ next to pkp.exe', hint: 'Empty: the launcher uses save/ next to pkp.exe.' },
-      { id: 'shader_cache', type: 'path', label: 'Shader cache', sec: 'nvn', key: 'shader_cache', def: '', placeholder: 'shader_cache/spirv next to pkp.exe', hint: 'Folder with the translated shaders (.spv and results.tsv).' },
+      { id: 'save_dir', type: 'path', label: 'Save folder', sec: 'fs', key: 'save_dir', def: '', placeholder: `save/ next to ${game.exe}`, hint: `Empty: the launcher uses save/ next to ${game.exe}.` },
+      { id: 'shader_cache', type: 'path', label: 'Shader cache', sec: 'nvn', key: 'shader_cache', def: '', placeholder: `shader_cache/spirv next to ${game.exe}`, hint: 'Folder with the translated shaders (.spv and results.tsv).' },
     ],
   },
   {
     title: 'Launcher', icon: 'wrench', file: 'config',
     fields: [
-      { id: 'game_dir', type: 'path', label: 'Game folder', sec: '', key: 'game_dir', def: '', placeholder: 'the launcher\'s own folder', hint: 'The folder with pkp.exe, pkp.ini and controls.ini.' },
+      { id: 'game_dir', type: 'path', label: 'Game folder', sec: '', key: 'game_dir', def: '', placeholder: 'the launcher\'s own folder', hint: `The folder with ${game.exe}, ${game.ini} and controls.ini.` },
       { id: 'minimize_on_play', type: 'toggle', label: 'Minimise while the game runs', sec: '', key: 'minimize_on_play', def: '0' },
     ],
   },
@@ -64,9 +64,11 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 const fwd = (s) => String(s).trim().replace(/\\/g, '/');
 
 export async function render(el, ctx) {
+  const game = ctx.game;
+  const SECTIONS = sectionsFor(game);
   const [data, cfg, status] = await Promise.all([api('read_settings'), api('get_config'), api('game_status')]);
-  const files = { pkp: data.pkp, controls: data.controls, config: { 'game_dir': cfg.game_dir, 'minimize_on_play': cfg.minimize_on_play ? '1' : '0' } };
-  const exists = { pkp: true, controls: data.controls_exists, config: true };
+  const files = { game: data.game, controls: data.controls, config: { 'game_dir': cfg.game_dir, 'minimize_on_play': cfg.minimize_on_play ? '1' : '0' } };
+  const exists = { game: true, controls: data.controls_exists, config: true };
   const keyOf = (f, k) => (f.file === 'config' ? k : `${f.sec}.${k}`);
   const get = (f, k, def) => files[f.file][keyOf(f, k)] ?? def;
 
@@ -138,7 +140,7 @@ export async function render(el, ctx) {
       <div class="page">
         <div class="hero">
           <h1>Settings</h1>
-          <p class="dim">These edit pkp.ini and controls.ini next to pkp.exe. Other keys and comments in those files are left alone.</p>
+          <p class="dim">These edit ${esc(game.ini)} and controls.ini next to ${esc(game.exe)}. Other keys and comments in those files are left alone.</p>
         </div>
         ${status.state === 'running' ? `<div class="banner warn">${icon('triangle-alert')}<div>The game is running. Most changes apply at the next start, and the game may overwrite controls.ini when it exits.</div></div>` : ''}
         ${!data.controls_exists ? `<div class="banner info">${icon('info')}<div>controls.ini does not exist yet in <code>${esc(data.game_dir)}</code>. The game creates it on its first start, so Display, Mouse and Button prompts become editable after that. Audio, Paths and Launcher options work now.</div></div>` : ''}

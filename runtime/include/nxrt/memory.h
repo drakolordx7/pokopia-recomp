@@ -49,6 +49,10 @@ bool decommit(uint64_t addr, uint64_t size);
 bool protect(uint64_t addr, uint64_t size, Prot p);
 uint64_t alloc_kernel(uint64_t size, uint64_t align = kPage);   // committed RW memory from the kernel region (bump allocator)
 bool is_mapped(uint64_t addr, uint64_t size);                // every byte of the range is committed and accessible (VirtualQuery)
+// From the heap page table, no VirtualQuery: 1 when every page of the range is committed read-write as far as this module set it (the
+// write tracker's own read-only arming is not seen here), 0 when one is not, -1 when the range is not in the heap view (or [memory]
+// fast_query is off).
+int heap_rw_state(uint64_t addr, uint64_t size);
 
 // ---- heap section ---------------------------------------------------------------------------------------------------
 // One pagefile-backed section (SEC_RESERVE, nothing is charged until committed) with a primary view at kHeapBase.

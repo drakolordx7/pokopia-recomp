@@ -4,7 +4,7 @@ Pokémon Pokopia (Switch 2) recompiled to run natively on Windows.
 
 [Download the latest build](https://github.com/drakolordx7/pokopia-recomp/releases/latest)
 
-You need your own extracted copy of the game, version 2.0.1a. Not affiliated with Nintendo, The Pokémon Company or Koei Tecmo.
+You need your own copy of the game, version 2.0.1a: an extracted folder, or NSP/XCI files plus your keys. Not affiliated with Nintendo, The Pokémon Company or Koei Tecmo.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ You need your own extracted copy of the game, version 2.0.1a. Not affiliated wit
 ## Usage
 
 1. Unzip the build and run `PokopiaLauncher.exe`.
-2. Pick your dump folder and press Set up. It compiles the game on your PC (about 7 minutes), then builds the shader cache (1 to 2 hours). You can pause it and continue later.
+2. Pick your dump folder (or your NSP/XCI files and key files) and press Set up. It compiles the game on your PC (about 7 minutes), then builds the shader cache (1 to 2 hours). You can pause it and continue later.
 3. Press Play.
 
 F1 opens the settings in game. Middle mouse toggles Joy-Con 2 mouse mode for placing items.

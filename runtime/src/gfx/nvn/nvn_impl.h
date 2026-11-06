@@ -20,6 +20,11 @@ void register_api_depth_poly_ms();  // DepthStencilState, PolygonState, Multisam
 void register_api_cmdbuf();
 void register_api_cmd_state();
 void register_api_cmd_work();
+void register_api_device_cmds();    // NVN2 device command buffers: nvnDeviceCommandBuffer*, Begin / End / SubmitDeviceCommands (api_device_cmds.cpp)
+void register_api_dlss();            // the nvnDlss* functions and nvnCommandBufferEvaluateDlss (NVN2 only; api_dlss.cpp)
+// The smaller NVN2 features (push constants, shading rate, exclusive scissor, conservative raster mode, ProgramBuilder, device message buffers,
+// dirty tile maps): api_small.cpp, NVN2-only names. Records into the command buffer like the families above.
+void register_api_small();
 
 // Host-side families that talk to the GPU layer only through nvn_gpu.h.
 void register_api_device();         // Device, Queue, Sync, Event, Window (api_device.cpp)

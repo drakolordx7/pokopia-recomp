@@ -1,0 +1,256 @@
+# key<TAB>status<TAB>note.  Overrides for the rows of work/xcheck/<run>/disagreements.tsv that the automatic adjudication left open or described misleadingly
+# (status: justified | fixed). Everything else in a run is closed automatically (column auto: nvdisasm backs us, or the bit is constant in the corpora).
+L0|211|LEA.HI	fixed	our text differed from nvdisasm on 28 exemplar words; fixed in 64da6cb
+L0|623|FFMA.FTZ	fixed	our text differed from nvdisasm on 6 exemplar words; fixed in 2d0dafb
+L0|624|@P6	fixed	our text differed from nvdisasm on 1 exemplar words; fixed in 2d0dafb
+L0|630|HADD2.F32	fixed	our text differed from nvdisasm on 6 exemplar words; fixed in b68cc3f
+L0|634|HSETP2.GT.AND	fixed	our text differed from nvdisasm on 1 exemplar words; fixed in b68cc3f
+L0|804|R2P	fixed	our text differed from nvdisasm on 109 exemplar words; fixed in b696aa8 and 0a3f6ab
+L0|808|FSEL	fixed	our text differed from nvdisasm on 1 exemplar words; fixed in 165f774
+L0|811|LEA.HI	fixed	our text differed from nvdisasm on 1 exemplar words; fixed in 64da6cb
+L0|923|ISBERD.SKEW.ATTR.32	fixed	our text differed from nvdisasm on 3 exemplar words; fixed in 38a8a09
+L0|a02|MOV	fixed	our text differed from nvdisasm on 12 exemplar words; fixed in 2d0dafb
+L0|a09|FMNMX.FTZ	fixed	our text differed from nvdisasm on 1 exemplar words; fixed in 2d0dafb
+L0|a20|FMUL.FTZ	fixed	our text differed from nvdisasm on 17 exemplar words; fixed in 2d0dafb
+L0|a23|FFMA.FTZ	fixed	our text differed from nvdisasm on 182 exemplar words; fixed in 2d0dafb
+L0|b60|TEX.SCR	fixed	our text differed from nvdisasm on 2 exemplar words; fixed in c4ed236
+L0|b69|TMML.EF	fixed	our text differed from nvdisasm on 340 exemplar words; fixed in c4ed236
+L1|2a5|UIMAD|name-differs	justified	nxnative shares its IMAD.WIDE emitter (AImadWide) with the uniform form; same operation, only the name differs
+L1|357|BMOV|name-differs	justified	nxnative treats BMOV as a no-op; our front end handles BMOV ATEXIT_PC / MACTIVE and ignores the rest (AmpereEmit)
+L1|59f|.UNKNOWN|ours-unknown	fixed	SURED was undecoded (1 Mario Kart World instruction); decoded in c4ed236
+L1|8a5|UIMAD|name-differs	justified	nxnative shares its IMAD.WIDE emitter (AImadWide) with the uniform form; same operation, only the name differs
+L1|91a|DEPBAR|name-differs	justified	nxnative treats it as a no-op (ANop): it orders threads only, per thread nothing happens; our front end drops it too (AmpereEmit NOP/DEPBAR/BSSY/BSYNC/BREAK/WARPSYNC)
+L1|927|.UNKNOWN|ours-unknown	fixed	ISBEWR was undecoded (634 Mario Kart World instructions); decoded in 38a8a09
+L1|941|BSYNC|name-differs	justified	nxnative treats it as a no-op (ANop): it orders threads only, per thread nothing happens; our front end drops it too (AmpereEmit NOP/DEPBAR/BSSY/BSYNC/BREAK/WARPSYNC)
+L1|942|BREAK|name-differs	justified	nxnative treats it as a no-op (ANop): it orders threads only, per thread nothing happens; our front end drops it too (AmpereEmit NOP/DEPBAR/BSSY/BSYNC/BREAK/WARPSYNC)
+L1|945|BSSY|name-differs	justified	nxnative treats it as a no-op (ANop): it orders threads only, per thread nothing happens; our front end drops it too (AmpereEmit NOP/DEPBAR/BSSY/BSYNC/BREAK/WARPSYNC)
+L1|948|WARPSYNC|name-differs	justified	nxnative treats it as a no-op (ANop): it orders threads only, per thread nothing happens; our front end drops it too (AmpereEmit NOP/DEPBAR/BSSY/BSYNC/BREAK/WARPSYNC)
+L1|957|BMOV|name-differs	justified	nxnative treats BMOV as a no-op; our front end handles BMOV ATEXIT_PC / MACTIVE and ignores the rest (AmpereEmit)
+L1|958|BRXU|name-differs	justified	nxnative registers BRXU on its BRX emitter (ABrx); same operation, uniform index register
+L1|983|LDL|name-differs	justified	nxnative has one emitter (ALdLocalShared) for LDL and LDS; only the emitter name differs
+L1|984|LDS|name-differs	justified	nxnative has one emitter (ALdLocalShared) for LDL and LDS; only the emitter name differs
+L1|9c3|S2UR|name-differs	justified	nxnative registers S2UR on its S2R emitter (AS2r); the guard difference is the L1-predicate row
+L1|9c3|guard-uniform	justified	nxnative lacks the uniform-guard flag for S2UR: nvdisasm prints @UPn (probed, all 16 guard values) and ours matches; a guarded S2UR would be mistranslated by nxnative. Impact on ours: none
+L1|b63|TLD4|name-differs	justified	nxnative has one texture emitter (ATex) for TEX/TLD/TLD4/TXD/TMML; only the emitter name differs
+L1|b66|TLD|name-differs	justified	nxnative has one texture emitter (ATex) for TEX/TLD/TLD4/TXD/TMML; only the emitter name differs
+L1|b69|TMML|name-differs	fixed	TMML was decoded like TEX (.EF, P0); decoded as nvdisasm does in c4ed236; the front end no longer writes P0
+L1|b6c|TXD|name-differs	justified	nxnative has one texture emitter (ATex) for TEX/TLD/TLD4/TXD/TMML; only the emitter name differs
+L1|b97|SULD|name-differs	justified	nxnative has one surface emitter (ASurface) for SULD/SUST; only the emitter name differs
+L1|b9b|SUST|name-differs	justified	nxnative has one surface emitter (ASurface) for SULD/SUST; only the emitter name differs
+L1|f55|BMOV|name-differs	justified	nxnative treats BMOV as a no-op; our front end handles BMOV ATEXIT_PC / MACTIVE and ignores the rest (AmpereEmit)
+L1|f56|BMOV|name-differs	justified	nxnative treats BMOV as a no-op; our front end handles BMOV ATEXIT_PC / MACTIVE and ignores the rest (AmpereEmit)
+L2|245|78|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0
+L2|245|79|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0
+L2|324|16|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|17|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|18|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|19|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|20|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|21|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|22|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|324|23|nx-only	justified	OUT.FINAL needs Rd = RZ; nvdisasm prints ???N for any other value (reserved), nxnative copies it. Real shaders have RZ
+L2|326|16|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|17|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|18|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|19|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|20|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|21|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|22|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|326|23|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|804|76|nx-only	fixed	R2P byte select (.B1..B3) was not decoded; fixed in b696aa8 and 0a3f6ab
+L2|804|77|nx-only	fixed	R2P byte select (.B1..B3) was not decoded; fixed in b696aa8 and 0a3f6ab
+L2|949|24|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|25|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|26|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|27|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|28|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|29|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|30|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|31|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|32|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|33|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|34|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|35|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|36|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|37|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|38|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|39|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|40|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|41|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|42|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|43|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|44|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|45|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|46|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|47|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|48|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|49|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|50|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|51|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|52|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|53|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|54|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|55|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|56|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|57|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|58|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|59|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|60|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|61|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|62|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|63|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|64|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|65|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|66|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|67|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|68|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|69|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|70|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|71|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|72|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|73|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|74|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|75|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|76|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|77|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|78|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|79|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|80|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|81|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|87|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|88|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|89|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|949|90|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|24|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|25|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|26|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|27|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|28|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|29|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|30|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|31|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|34|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|35|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|36|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|37|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|38|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|39|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|40|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|41|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|42|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|43|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|44|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|45|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|46|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|47|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|48|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|49|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|50|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|51|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|52|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|53|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|54|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|55|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|56|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|57|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|58|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|59|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|60|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|61|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|62|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|63|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|64|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|65|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|66|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|67|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|68|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|69|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|70|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|71|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|72|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|73|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|74|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|75|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|76|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|77|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|78|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|79|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|80|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|81|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|86|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|87|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|88|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|89|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|950|90|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|24|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|25|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|26|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|27|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|28|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|29|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|32|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|33|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|34|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|35|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|36|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|37|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|38|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|39|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|40|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|41|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|42|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|43|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|44|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|45|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|46|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|47|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|48|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|49|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|50|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|51|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|52|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|53|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|54|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|55|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|56|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|57|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|58|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|59|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|60|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|61|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|62|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|63|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|64|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|65|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|66|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|67|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|68|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|69|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|70|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|71|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|72|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|73|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|74|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|75|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|76|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|77|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|78|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|79|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|80|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|81|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|87|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|88|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|89|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|958|90|ours-only	justified	nxnative's emitter raises on the stub translator context (it needs the decoded program), so its use of this bit is not visible; ours matches nvdisasm
+L2|981|73|ours-only	fixed	access size 7 is INVALID7 (we printed U.128); fixed in 38a8a09
+L2|a45|78|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0
+L2|a45|79|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0
+L2|b60|79|nx-only	fixed	TEX .F16.RN/.F16.RZ at bits 79..80 was not decoded; fixed in c4ed236; the front end rejects it
+L2|b66|61|ours-only	fixed	TLD dimension 3 is INVALID3 (we printed CUBE); fixed in c4ed236
+L2|b69|41|ours-only	fixed	TMML handle/mask fields; the form was wrong, fixed in c4ed236
+L2|b69|42|ours-only	fixed	TMML handle/mask fields; the form was wrong, fixed in c4ed236
+L2|b69|43|ours-only	fixed	TMML handle/mask fields; the form was wrong, fixed in c4ed236
+L2|b69|44|ours-only	fixed	TMML handle/mask fields; the form was wrong, fixed in c4ed236
+L2|b69|45|ours-only	fixed	TMML handle/mask fields; the form was wrong, fixed in c4ed236
+L2|c45|78|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0
+L2|c45|79|ours-only	fixed	I2FP rounding 1/2 are INVALID1/INVALID2 in nvdisasm (we printed RM/RP); fixed in 3991dc0

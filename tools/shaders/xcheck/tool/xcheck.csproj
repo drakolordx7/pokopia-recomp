@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- xcheck: decode a corpus with our Ampere decoder and with nxnative's Ampere front end and compare (see ../README.md). -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>preview</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>xcheck</AssemblyName>
+    <RootNamespace>Nx.Shaders.XCheck</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../ampere/decoder/AmpereDecoder.csproj" />
+    <ProjectReference Include="../nxref/NxnativeRef.csproj" />
+  </ItemGroup>
+
+</Project>

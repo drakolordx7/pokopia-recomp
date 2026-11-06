@@ -24,6 +24,7 @@
 
 #include "nvn_decoded.h"
 #include "nvn_format.h"
+#include "nvn_small.h"
 
 namespace nxrt::nvn::be {
 
@@ -261,7 +262,23 @@ struct Program : Obj {
     uint32_t serial = 0;
     std::atomic<uint8_t> gpl_bound{0};      // 1 once a command buffer was recorded with these shaders (the shader parts are queued first); reset by SetShaders
     std::string label;
+    // On-demand translation: stages whose block the shader cache's translator is still working on. Draws and dispatches with this program
+    // bound are skipped until program_resolve_pending() fills the stages in. pending_mu guards pending, stage[], code_hash[] and linked
+    // against the replay thread's resolve (SetShaders holds it throughout; the resolve only try-locks).
+    struct PendingBlock {
+        const uint8_t* code;
+        const uint8_t* control;
+        std::string hash;
+    };
+    std::mutex pending_mu;
+    std::vector<PendingBlock> pending;
+    std::atomic<bool> has_pending{false};
+    bool missing_hard = false;              // a block with no translation that is not being translated either
+    uint32_t sample_shading = 0;            // nvnProgramSetSampleShading / ProgramBuilder (kept, not applied: pipelines do not use sample shading)
 };
+
+// Fills in the stages of `p` whose on-demand translation finished (replay thread). True while some stage is still being translated.
+bool program_resolve_pending(Program* p);
 
 // ---- synchronisation -----------------------------------------------------------------------------------------------------
 struct Sync : Obj {
@@ -304,6 +321,7 @@ struct Device : Obj {
     int depth_mode = NVN_DEPTH_MODE_NEAR_IS_MINUS_W;
     std::atomic<uint32_t> next_texture_id{1};
     std::atomic<uint32_t> debug_domain{1};
+    FastClearTables fast_clear;   // nvnDeviceRegisterFastClear* (nvn_small.h)
 };
 
 struct Queue : Obj {

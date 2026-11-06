@@ -27,6 +27,7 @@
 #include "nxrt/gfx_tuning.h"
 #include "nxrt/log.h"
 #include "nvn_decoded.h"
+#include "nvn_devcmd.h"
 #include "nvn_enums.h"
 #include "nvn_format.h"
 #include "nvn_mask_clear.h"
@@ -95,6 +96,7 @@ struct GState {
     bool depth_has_view = false;
     int window_origin = NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT;
     int depth_mode = NVN_DEPTH_MODE_NEAR_IS_MINUS_W;
+    SmallState small;   // push constants, shading rate, exclusive scissor, conservative raster (nvn_small.h)
 };
 
 GState S;
@@ -629,7 +631,13 @@ void set_viewports_and_scissors() {
         const bool lower_left = S.window_origin == NVN_WINDOW_ORIGIN_MODE_LOWER_LEFT;
         vp[i] = lower_left ? VkViewport{x, y, w, h, S.dr[i][0], S.dr[i][1] == 0.0f && S.dr[i][0] == 0.0f ? 1.0f : S.dr[i][1]}
                            : VkViewport{x, y + h, w, -h, S.dr[i][0], S.dr[i][1] == 0.0f && S.dr[i][0] == 0.0f ? 1.0f : S.dr[i][1]};
-        if (i < S.nsc) sc[i] = scissor_rect(S.sc[i]);
+        if (i < S.nsc) {
+            int32_t r[4];
+            bool exact = true;
+            small_exclusive_scissor(S.small, i, S.sc[i], r, &exact);   // exclusive scissor (nvn_small.h): the part of the scissor it leaves, when that is one rectangle
+            if (!exact) log_once("excl-scissor", "exclusive scissor leaves a hole in the scissor: one rectangle cannot express it, the draw is not clipped by it");
+            sc[i] = scissor_rect(r);
+        }
         else sc[i] = {{0, 0}, P.extent};
     }
     vkCmdSetViewportWithCount(cb, nvp, vp);
@@ -1201,7 +1209,7 @@ void out_before_op(const RecordReader& r) {
         case Op::Dispatch: case Op::DispatchIndirect: case Op::Barrier: case Op::CallCommands: case Op::PushDebugGroup: case Op::PopDebugGroup:
         case Op::ClearColor: case Op::ClearDepthStencil: case Op::ClearTexture: case Op::CopyTextureToTexture: case Op::Downsample:
         case Op::DrawTexture: case Op::DiscardColor: case Op::DiscardDepthStencil: case Op::ResolveDepth: case Op::FenceSync: case Op::WaitSync:
-        case Op::ResetCounter: case Op::WaitEvent: case Op::SetRenderEnable:
+        case Op::ResetCounter: case Op::WaitEvent: case Op::SetRenderEnable: case Op::Small:
             return;
         case Op::CopyBufferToTexture: case Op::CopyTextureToBuffer:    // do_copy_buffer_texture: its own range (it knows the size)
             return;
@@ -1858,6 +1866,28 @@ bool build_key(GraphicsKey& key, VkPrimitiveTopology topo) {
     return true;
 }
 
+// The NVN2 smaller features that are pipeline dynamic state (nvn_small.h): the conservative raster mode with its overestimation size, and the
+// fragment shading rate. Every pipeline lists them when the device has them (small_dynamic_*), so they are set at the start of every pass and
+// whenever one of the commands changed them (kDynRaster). Conservative raster is always overestimate: mode 2 (one more hardware control bit
+// the sdk sets, 0x60A030) has no Vulkan counterpart that is known to match. The shading rate is the palette's single rate or 1x1 (shading_rate_for_draw).
+void set_small_dynamic(VkCommandBuffer cb) {
+    const auto& lim = device().limits_ext();
+    if (small_dynamic_conservative()) {
+        const bool on = small_conservative_on(S.small);
+        vkCmdSetConservativeRasterizationModeEXT(cb, on ? VK_CONSERVATIVE_RASTERIZATION_MODE_OVERESTIMATE_EXT : VK_CONSERVATIVE_RASTERIZATION_MODE_DISABLED_EXT);
+        vkCmdSetExtraPrimitiveOverestimationSizeEXT(cb, on ? small_conservative_extra(S.small, lim.cons_max_extra, lim.cons_granularity) : 0.0f);
+    }
+    if (small_dynamic_fsr()) {
+        uint32_t w = 1, h = 1;
+        bool exact = true;
+        shading_rate_for_draw(S.small, P.samples > 1 ? 0u : lim.fsr_sizes, w, h, &exact);
+        if (!exact) log_once("vrs-image", "shading rate image bound with a palette of several rates: the image is not converted, draws run at full rate");
+        const VkExtent2D size = {w, h};
+        const VkFragmentShadingRateCombinerOpKHR ops[2] = {VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR};
+        vkCmdSetFragmentShadingRateKHR(cb, &size, ops);
+    }
+}
+
 void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, int index_type) {
     VkCommandBuffer cb = F->cb;
     if (dirty & kDynVp) set_viewports_and_scissors();
@@ -1868,6 +1898,7 @@ void set_dynamic_state(uint32_t dirty, VkPrimitiveTopology topo, bool indexed, i
         vkCmdSetFrontFace(cb, ff);
         vkCmdSetRasterizerDiscardEnable(cb, S.rasterizer_discard);
         vkCmdSetLineWidth(cb, device().features().wide_lines ? std::max(1.0f, S.line_width) : 1.0f);
+        set_small_dynamic(cb);
     }
     if (topo != g_topo) {
         vkCmdSetPrimitiveTopology(cb, topo);
@@ -2108,7 +2139,27 @@ const ShaderInfo* passthrough_tcs_for(const ShaderInfo* vs, const ShaderInfo* te
 }
 const ShaderInfo* tcs_now() { return S.stage[kTessCtl] ? S.stage[kTessCtl] : g_gen_tcs; }
 
+// On-demand shader translation (nvn_shaders.h): a bound program with a stage still being translated skips its draws (graphics stages bound)
+// or dispatches (compute bound) until the stage is there. Counted, and logged once per 10 s while it happens.
+bool g_gfx_pending = false, g_cs_pending = false;
+uint64_t g_pending_draws = 0, g_pending_dispatches = 0;
+std::chrono::steady_clock::time_point g_pending_log_at{};
+
+void note_pending_skip(bool dispatch) {
+    ++(dispatch ? g_pending_dispatches : g_pending_draws);
+    const auto now = std::chrono::steady_clock::now();
+    if (g_pending_log_at.time_since_epoch().count() == 0) g_pending_log_at = now;
+    if (now - g_pending_log_at < std::chrono::seconds(10)) return;
+    ShaderCache& c = shader_cache();
+    NXLOG_I(kTag, "shaders: skipped %llu draws and %llu dispatches in the last %.0f s waiting for on-demand translation (%zu blocks queued, %llu translated this run)",
+            static_cast<unsigned long long>(g_pending_draws), static_cast<unsigned long long>(g_pending_dispatches),
+            std::chrono::duration<double>(now - g_pending_log_at).count(), c.translator_pending(), static_cast<unsigned long long>(c.translator_done()));
+    g_pending_draws = g_pending_dispatches = 0;
+    g_pending_log_at = now;
+}
+
 bool begin_draw(int mode, bool indexed, int index_type, VkPrimitiveTopology* topo_out) {
+    if (g_gfx_pending) { note_pending_skip(false); return false; }
     const ShaderInfo* vs = S.stage[kVertex];
     if (!vs) { log_once("draw-no-vs", "draw without a vertex shader skipped"); return false; }
     if (!S.render_enable) return false;
@@ -2709,6 +2760,7 @@ void do_dispatch(uint32_t x, uint32_t y, uint32_t z, uint64_t indirect) {
     const ShaderInfo* cs = S.stage[kCompute];
     TRACE("dispatch %u %u %u indirect %llx cs %s%s%s", x, y, z, static_cast<unsigned long long>(indirect), cs ? cs->hash.c_str() : "-",
           !cs && !g_cs_missing.empty() ? " missing " : "", !cs ? g_cs_missing.c_str() : "");
+    if (g_cs_pending) { note_pending_skip(true); return; }
     if (!cs) return;
     const ShaderInfo* stages[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, cs};
     const ProgLayout* pl = prog_layout(stages);
@@ -3064,6 +3116,125 @@ void do_downsample(const P_Downsample& p) {
     gstamp("downsample");
 }
 
+// nvnCommandBufferEvaluateDlss (api_dlss.cpp): the game's own upscale call. With [upscale] mode fsr3, dlss or dlaa and the SDK present, FSR 3 / DLSS
+// runs on the game's colour, depth and motion vectors (temporal_evaluate_native) and its result is copied into the game's output rectangle;
+// otherwise (or when that cannot run) the colour rectangle is scaled into the output rectangle with the bilinear filter, which is a copy when the
+// two have the same size.
+void do_evaluate_dlss(const P_EvaluateDlss& p) {
+    Texture *in = p.color.tex, *out = p.output.tex;
+    if (!in || !out || in == out) { log_once("dlss-args", "EvaluateDlss without an input colour or an output texture (or both the same): skipped"); return; }
+    if (!tex_gpu(in) || !tex_gpu(out)) return;
+    if (tex_is_depth(in) || tex_is_depth(out)) { log_once("dlss-depthfmt", "EvaluateDlss on a depth-format colour or output texture: skipped"); return; }
+    end_pass();
+    const SubRes is = sub_of(p.color.view, p.color.has_view), os = sub_of(p.output.view, p.output.has_view);
+    const VkExtent3D ie = tex_extent(in, is.level), oe = tex_extent(out, os.level);   // NVN texels
+    const float sin_ = tex_scale(in), sout = tex_scale(out);
+    auto fit = [](int32_t want, int32_t base, uint32_t have) {   // the rectangle's size: 0 is the whole texture; never past its edge
+        const int32_t room = std::max<int32_t>(1, static_cast<int32_t>(have) - std::max(0, base));
+        return want > 0 ? std::min(want, room) : room;
+    };
+    const int32_t iw = fit(p.in_w, p.color.base_x, ie.width), ih = fit(p.in_h, p.color.base_y, ie.height);
+    const int32_t ow = fit(p.out_w, p.output.base_x, oe.width), oh = fit(p.out_h, p.output.base_y, oe.height);
+    auto px = [](int32_t v, float sc) { return std::max<int32_t>(0, static_cast<int32_t>(std::lround(v * sc))); };
+    const VkExtent2D render{static_cast<uint32_t>(std::max(1, px(iw, sin_))), static_cast<uint32_t>(std::max(1, px(ih, sin_)))};
+    const VkExtent2D outx{static_cast<uint32_t>(std::max(1, px(ow, sout))), static_cast<uint32_t>(std::max(1, px(oh, sout)))};
+    const VkOffset3D in_at{px(p.color.base_x, sin_), px(p.color.base_y, sin_), 0}, out_at{px(p.output.base_x, sout), px(p.output.base_y, sout), 0};
+
+    bool done = false;
+    const char* route = "plain";
+    Texture *depth = p.depth.tex, *motion = p.motion.tex;
+    if (extras::temporal_wanted() && depth && motion && depth != in && motion != in && tex_gpu(depth) && tex_gpu(motion)) {
+        const SubRes ds = sub_of(p.depth.view, p.depth.has_view), ms = sub_of(p.motion.view, p.motion.has_view);
+        auto request = [](const SubRes& s) {
+            ViewRequest r;
+            r.base_level = s.level;
+            r.level_count = 1;
+            r.base_layer = s.layer;
+            r.layer_count = 1;
+            r.depth_aspect = true;
+            return r;
+        };
+        for (Texture* t : {in, depth, motion}) {
+            tex_ensure_current(t, *F);
+            tex_transition(t, *F, tex_sampled_layout(t));
+        }
+        extras::NativeTemporalFrame f;
+        f.color.view = tex_sampled_view(in, request(is));
+        f.color.layout = tex_sampled_layout(in);
+        f.depth.view = tex_sampled_view(depth, request(ds));
+        f.depth.layout = tex_sampled_layout(depth);
+        f.motion.view = tex_sampled_view(motion, request(ms));
+        f.motion.layout = tex_sampled_layout(motion);
+        const float sd = tex_scale(depth), sm = tex_scale(motion);
+        const bool mv_low_res = (p.flags & 2u) != 0;   // the network's NGX flag: motion vectors at the render size (else at the output size)
+        f.color.scale[0] = f.color.scale[1] = 1.0f;
+        f.color.off[0] = in_at.x;
+        f.color.off[1] = in_at.y;
+        f.depth.scale[0] = iw * sd / static_cast<float>(render.width);
+        f.depth.scale[1] = ih * sd / static_cast<float>(render.height);
+        f.depth.off[0] = px(p.depth.base_x, sd);
+        f.depth.off[1] = px(p.depth.base_y, sd);
+        f.motion.scale[0] = (mv_low_res ? iw : ow) * sm / static_cast<float>(render.width);
+        f.motion.scale[1] = (mv_low_res ? ih : oh) * sm / static_cast<float>(render.height);
+        f.motion.off[0] = px(p.motion.base_x, sm);
+        f.motion.off[1] = px(p.motion.base_y, sm);
+        f.render = render;
+        f.out = outx;
+        const float to_render_x = mv_low_res ? 1.0f : static_cast<float>(render.width) / static_cast<float>(outx.width);   // vectors in output pixels -> render pixels
+        const float to_render_y = mv_low_res ? 1.0f : static_cast<float>(render.height) / static_cast<float>(outx.height);
+        f.mv_scale[0] = p.mv_scale[0] * to_render_x;
+        f.mv_scale[1] = p.mv_scale[1] * to_render_y;
+        f.jitter_px[0] = p.jitter[0];
+        f.jitter_px[1] = p.jitter[1];
+        f.depth_reversed = (p.flags & 8u) != 0;
+        f.reset = p.reset != 0;
+        f.history_key = p.net ^ (static_cast<uint64_t>(p.serial) << 52);
+        extras::NativeTemporalResult res;
+        if (f.color.view && f.depth.view && f.motion.view && extras::temporal_evaluate_native(&device(), F->cb, f, &res)) {
+            g_dirty = kAllDirty;                                               // the SDKs bind their own compute state
+            tex_ensure_current(out, *F);
+            tex_transition(out, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            tex_sparse_before_copy(out, os.layer, os.level);
+            tex_mark_gpu_written(out);
+            VkImageBlit b = {};
+            b.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            b.dstSubresource = {tex_aspect(out), os.level, os.layer, 1};
+            b.srcOffsets[1] = {static_cast<int32_t>(outx.width), static_cast<int32_t>(outx.height), 1};
+            b.dstOffsets[0] = out_at;
+            b.dstOffsets[1] = {out_at.x + static_cast<int32_t>(outx.width), out_at.y + static_cast<int32_t>(outx.height), 1};
+            vkCmdBlitImage(F->cb, res.image, VK_IMAGE_LAYOUT_GENERAL, tex_image(out), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b, VK_FILTER_NEAREST);
+            route = res.backend;
+            done = true;
+        }
+    }
+    if (!done) {
+        tex_ensure_current(in, *F);
+        tex_ensure_current(out, *F);
+        tex_transition(in, *F, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        tex_transition(out, *F, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        tex_sparse_before_copy(out, os.layer, os.level);
+        tex_mark_gpu_written(out);
+        VkImageBlit b = {};
+        b.srcSubresource = {tex_aspect(in), is.level, is.layer, 1};
+        b.dstSubresource = {tex_aspect(out), os.level, os.layer, 1};
+        b.srcOffsets[0] = in_at;
+        b.srcOffsets[1] = {in_at.x + static_cast<int32_t>(render.width), in_at.y + static_cast<int32_t>(render.height), 1};
+        b.dstOffsets[0] = out_at;
+        b.dstOffsets[1] = {out_at.x + static_cast<int32_t>(outx.width), out_at.y + static_cast<int32_t>(outx.height), 1};
+        const bool same = render.width == outx.width && render.height == outx.height;
+        vkCmdBlitImage(F->cb, tex_image(in), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, tex_image(out), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &b,
+                       same ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+    }
+    memory_barrier(F->cb);
+    counters().copies.fetch_add(1, std::memory_order_relaxed);
+    static std::string told;   // the route is logged when it changes
+    if (told != route) {
+        told = route;
+        NXLOG_I(kTag, "EvaluateDlss: %ux%u -> %ux%u by %s", render.width, render.height, outx.width, outx.height, route);
+    }
+    gstamp("evaluate dlss");
+}
+
 void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
     // a GPU-ordered write of up to 64 KiB into pool memory (UpdateUniformBuffer, counters, events)
     end_pass();
@@ -3078,6 +3249,9 @@ void do_write_memory(uint64_t gpu_addr, const void* data, uint32_t size) {
 
 // ---- the interpreter ----------------------------------------------------------------------------------------------------------
 void apply_bind_program(const P_BindProgram& p) {
+    const bool pending = p.program && program_resolve_pending(p.program);
+    if (p.stages & ((1u << kCompute) - 1)) g_gfx_pending = pending;
+    if (p.stages & (1u << kCompute)) g_cs_pending = pending;
     for (int st = 0; st < 6; ++st)
         if (p.stages & (1u << st)) S.stage[st] = p.program ? p.program->stage[st] : nullptr;
     if (g_trace && (p.stages & (1u << kCompute))) {
@@ -3136,6 +3310,121 @@ bool counter_window_has_gpu_draw(RecordReader look, uint32_t type) {
         if (op == Op::DrawIndirect || op == Op::DrawXfb) return true;
     }
     return false;
+}
+
+void run_list(const CmdList& list, int depth);
+
+// Splits the submission so the CPU can read [addr, addr + size): what was recorded so far runs and completes first (nvn_gpu.cpp frame_split). The
+// command buffer changes, so what lived in it is ended (render pass, queries, debug labels) and everything is bound again afterwards, the way
+// replay_begin_submit starts a submission. Writes noted so far are done once the GPU is; the ones of the rest of the submission are noted again.
+bool split_for_read(uint64_t addr, uint64_t size) {
+    static std::atomic<uint64_t> splits{0};
+    const PoolHit hit = pool_lookup(addr);
+    if (!F || !hit.pool || hit.pool->is_virtual || !hit.pool->base || hit.offset + size > hit.pool->size) return false;
+    end_pass();
+    if (out_any()) flush_compute_out(kOutOther);   // held compute results are copied back by this part
+    if (g_occ_active >= 0) {                       // a query cannot outlive its command buffer: the count so far is what a report gets
+        vkCmdEndQuery(F->cb, g_occ_pool, static_cast<uint32_t>(g_occ_active));
+        g_occ_last = g_occ_active;
+        g_occ_active = -1;
+    }
+    for (int k = 0; k < 2; ++k) {
+        cw_end_query(g_cw[k], k == 1);
+        g_cw[k].active = -1;
+    }
+    for (; g_dbg_depth > 0; --g_dbg_depth) vkCmdEndDebugUtilsLabelEXT(F->cb);
+    if (!frame_split(*F)) return false;
+    P = Pass();
+    g_pending.clear();                             // everything before the split has completed: no barrier is owed for it
+    g_set_cache.clear();
+    g_bound_pipeline = VK_NULL_HANDLE;
+    g_dirty = kAllDirty;
+    g_pl = nullptr;
+    g_pipe = VK_NULL_HANDLE;
+    g_topo = g_pipe_topo = VK_PRIMITIVE_TOPOLOGY_MAX_ENUM;
+    g_restart_valid = false;
+    g_vb_bound_in_cb = false;
+    g_fb_use.clear();
+    g_key_dummy_binding = 0;
+    for (size_t i = 0; i < g_gw_count; ++i)
+        if (g_gw[i].serial == F->serial) g_gw[i].serial = 0;
+    if (g_gw_lost_serial == F->serial) g_gw_lost_serial = 0;
+    const uint64_t n = splits.fetch_add(1) + 1;
+    if (n == 1 || (n & 255) == 0) NXLOG_I("nvn.replay", "replay: submission split to read device command words (%llu so far): the GPU is waited for", static_cast<unsigned long long>(n));
+    return true;
+}
+
+// nvnCommandBufferSubmitDeviceCommands: the command words in the device command buffer's storage are read by the CPU, decoded (nvn_devcmd.h)
+// and the draws in them run like the recorded ones. First version: the words must be readable here (written by the CPU, or by a submission
+// that has completed; see cpu_view). Words the GPU writes in the submission being recorded: the submission is split first (split_for_read), the
+// GPU waited for, and the words read; if that is not possible the submit is skipped and logged. VK_EXT_device_generated_commands would take the place of this read-back: docs/nvn2_device_commands.md.
+void do_submit_device_commands(const P_SubmitDeviceCommands& p, int depth) {
+    static bool noted = false;
+    if (!p.stream_size) return;
+    const uint8_t* bytes = cpu_view(p.stream_address, p.stream_size);
+    if (!bytes && split_for_read(p.stream_address, p.stream_size)) bytes = cpu_view(p.stream_address, p.stream_size);
+    if (!bytes) {
+        note_unsupported("device commands: the command words are not readable by the CPU (written by the GPU in this submission, or outside any pool)");
+        counters().draws_skipped.fetch_add(1);
+        return;
+    }
+    std::vector<devcmd::Cmd> cmds;
+    const devcmd::Stats st = devcmd::decode(bytes, static_cast<size_t>(p.stream_size), cmds);
+    if (!noted) {
+        noted = true;
+        NXLOG_I("nvn.replay", "replay: device commands (first): %u words, %u packets, %u draws, %u not decoded (first 0x%08x 0x%08x), %u bad draw arguments; stopped at %s",
+                st.words, st.packets, st.commands, st.unhandled, st.first_unhandled[0], st.first_unhandled[1], st.bad_args, devcmd::end_name(st.end));
+    }
+    if (st.unhandled) note_unsupported("device commands: packets that are not decoded are skipped");
+    // The decoded commands become the records the API would have recorded, in a list of their own that runs here: the replay's own handling of
+    // each op (dirty flags, compute results that go back first, bindings) applies to them as it does to a recorded list.
+    CmdList tmp;
+    for (const devcmd::Cmd& c : cmds) {
+        switch (c.kind) {
+            case devcmd::Kind::DrawArrays: {
+                if (c.indirect && (!c.count || !c.instance_count)) break;   // an indirect draw with nothing to draw
+                P_DrawArrays d{};
+                d.mode = c.mode; d.first = c.first; d.count = c.count; d.base_instance = c.base_instance; d.instance_count = c.instance_count;
+                tmp.emit(Op::DrawArrays, d);
+                break;
+            }
+            case devcmd::Kind::DrawElements: {
+                if (c.indirect && (!c.count || !c.instance_count)) break;
+                P_DrawElements d{};
+                d.mode = c.mode; d.type = c.index_type; d.count = c.count; d.instance_count = c.instance_count;
+                d.base_vertex = c.base_vertex; d.base_instance = c.base_instance;
+                const uint32_t isz = index_size_bytes(static_cast<int>(c.index_type));
+                d.index_address = c.index_address + static_cast<uint64_t>(c.first) * (isz ? isz : 4);
+                tmp.emit(Op::DrawElements, d);
+                break;
+            }
+            case devcmd::Kind::BindVertexBuffer: case devcmd::Kind::BindUniformBuffer: {
+                P_BindBuffers d{};
+                d.kind = c.kind == devcmd::Kind::BindVertexBuffer ? kBufVertex : kBufUniform;
+                d.stage = c.stage; d.first = c.slot; d.count = 1;
+                const NVNbufferRange rg{c.address, c.size};
+                tmp.emit(Op::BindBuffers, d, &rg, static_cast<uint32_t>(sizeof rg));
+                break;
+            }
+            case devcmd::Kind::SetStencil: {
+                P_Stencil d{};
+                d.what = c.what; d.face = c.face; d.value = c.value;
+                tmp.emit(Op::SetStencil, d);
+                break;
+            }
+            case devcmd::Kind::SetPrimitiveRestart: {
+                P_PrimitiveRestart d{c.enable, c.value};
+                tmp.emit(Op::SetPrimitiveRestart, d);
+                break;
+            }
+            case devcmd::Kind::SetScissor: {
+                const P_Rects d{c.slot, 1};
+                tmp.emit(Op::SetScissors, d, c.rect, static_cast<uint32_t>(sizeof c.rect));
+                break;
+            }
+        }
+    }
+    run_list(tmp, depth + 1);
 }
 
 void run_list(const CmdList& list, int depth) {
@@ -3257,7 +3546,15 @@ void run_list(const CmdList& list, int depth) {
                     S.render_enable = r.payload<P_U32>().v != 0;
                 }
                 break;
-            case Op::SetCoverageModulationTable: case Op::SetConservativeRaster: break;
+            case Op::SetCoverageModulationTable: break;
+            case Op::SetConservativeRaster: S.small.cons_legacy = r.payload<P_U32>().v != 0; g_dirty |= kDynRaster; break;
+            case Op::Small: {
+                const auto& p = r.payload<P_Small>();
+                const uint32_t blob_bytes = r.size() - static_cast<uint32_t>(sizeof(RecHeader)) - static_cast<uint32_t>((sizeof(P_Small) + 7u) & ~7u);
+                small_apply(S.small, p.kind, p.a, p.b, p.c, p.addr, r.blob<P_Small>(), blob_bytes);
+                g_dirty |= kDynRaster | kDynVp;
+                break;
+            }
             case Op::SetRenderTargets: {
                 const auto& p = r.payload<P_RenderTargets>();
                 S.ncolor = p.count;
@@ -3279,6 +3576,7 @@ void run_list(const CmdList& list, int depth) {
             case Op::DrawArrays: do_draw_arrays(r.payload<P_DrawArrays>()); break;
             case Op::DrawElements: do_draw_elements(r.payload<P_DrawElements>()); break;
             case Op::DrawIndirect: do_draw_indirect(r.payload<P_DrawIndirect>()); break;
+            case Op::SubmitDeviceCommands: do_submit_device_commands(r.payload<P_SubmitDeviceCommands>(), depth); break;
             case Op::DrawXfb: do_draw_xfb(r.payload<P_DrawXfb>()); break;
             case Op::PushDebugGroup:
                 if (device().features().debug_labels && vkCmdBeginDebugUtilsLabelEXT) {
@@ -3324,6 +3622,7 @@ void run_list(const CmdList& list, int depth) {
             case Op::CopyTextureToBuffer: do_copy_buffer_texture(r.payload<P_CopyBufTex>(), false); break;
             case Op::CopyTextureToTexture: do_copy_texture_texture(r.payload<P_CopyTexTex>()); break;
             case Op::Downsample: do_downsample(r.payload<P_Downsample>()); break;
+            case Op::EvaluateDlss: do_evaluate_dlss(r.payload<P_EvaluateDlss>()); break;
             case Op::UpdateUniformBuffer: {
                 const auto& p = r.payload<P_UpdateUniformBuffer>();
                 const uint8_t* data = r.blob<P_UpdateUniformBuffer>();
@@ -3514,7 +3813,7 @@ void note_frame_for_pacing() {
     using clk = std::chrono::steady_clock;
     static uint64_t last_p = 0, last_d = 0;
     static int low = 0;
-    static clk::time_point last_present{}, last_stall{};
+    static clk::time_point last_present{}, last_stall{}, low_since{};
     const uint64_t p = counters().presents.load(std::memory_order_relaxed);
     if (p == last_p) return;
     const auto now = clk::now();
@@ -3525,7 +3824,12 @@ void note_frame_for_pacing() {
     if (last_present == clk::time_point{} || now - last_present > std::chrono::milliseconds(100)) last_stall = now;
     last_present = now;
     low = per < 16 ? low + 1 : 0;
-    const bool want = low >= 3 && now - last_stall < std::chrono::milliseconds(1500);
+    if (low == 1) low_since = now;
+    // A loading screen presents steadily but its loading still advances once per frame (Pokopia: 14 s at 60 fps before the title), so a
+    // run of light frames stays unpaced for up to [display] unpaced_loading_s (20) seconds even without stalls.
+    static const double max_s = nxrt::config_get_double("display", "unpaced_loading_s", 20.0);
+    const bool want = low >= 3 && (now - last_stall < std::chrono::milliseconds(1500) ||
+                                   now - low_since < std::chrono::duration<double>(max_s));
     if (want != nxrt::frame_limiter_unpaced()) {
         nxrt::frame_limiter_set_unpaced(want);
         ft::mark(want ? "pace.loading" : "pace.playing", static_cast<uint32_t>(per));

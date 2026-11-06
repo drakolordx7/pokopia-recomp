@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! First-run game build (release model b): the release ships no game code, so pkp.exe is built here, on the player's PC,
-//! from their own dump. The work is done by `tools/build/pkp_build.py` (bundled Python, lifter and Zig; see that file):
-//! verify the ExeFS by hash, lift the four modules, compile them, link pkp.exe against pkp_rt.dll (the runtime).
+//! First-run game build (release model b): the release ships no game code, so the game exe is built here, on the player's PC,
+//! from their own dump. The work is done by `tools/build/game_build.py` (bundled Python, lifter and Zig; see that file; it reads the
+//! game manifest, game.toml): verify the ExeFS by hash, lift the modules, compile them, link the exe against the runtime DLL.
 //!
 //! Resumable: the script keeps finished modules and objects in `<game>/build`; Pause writes `<game>/build/cancel`, which
-//! stops it and its compilers. `<game>/build/done.json` plus pkp.exe means the build is finished.
-//! No crate-local imports, so `examples/first_run.rs` can build this file alone.
+//! stops it and its compilers. `<game>/build/done.json` plus the exe means the build is finished.
+//! No crate-local imports (the names it needs are arguments), so `examples/first_run.rs` can build this file alone.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -33,19 +33,26 @@ pub struct Tick {
     pub message: String,
 }
 
-/// The package builds pkp.exe itself (model b) when it carries the build tools.
+/// The build script in the package; `FORMAT` in it and `BUILD_FORMAT` here move together.
+const SCRIPT: &str = "game_build.py";
+/// done.json of a finished build carries this "format". An exe built by another format (an older runtime API) is rebuilt.
+const BUILD_FORMAT: u64 = 2;
+
+/// The package builds the game exe itself (model b) when it carries the build tools.
 pub fn is_package_b(tools_dir: &Path) -> bool {
-    tools_dir.join("build").join("pkp_build.py").is_file()
+    tools_dir.join("build").join(SCRIPT).is_file()
 }
 
-/// pkp.exe was built from this release's runtime and is in place.
-pub fn is_built(game_dir: &Path) -> bool {
-    game_dir.join("pkp.exe").is_file() && game_dir.join("build").join("done.json").is_file()
+/// The game exe (`exe`, the manifest's files.exe) was built from this release's runtime and is in place.
+pub fn is_built(game_dir: &Path, exe: &str) -> bool {
+    let done = fs::read_to_string(game_dir.join("build").join("done.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok());
+    game_dir.join(exe).is_file() && done.map_or(false, |d| d.get("format").and_then(|v| v.as_u64()) == Some(BUILD_FORMAT))
 }
 
-pub fn find_tools(tools_dir: &Path) -> Result<Tools, String> {
+/// `rt_lib`: the import library of the runtime DLL, tools/build/sdk/<name> (the manifest's files.runtime_dll with .lib).
+pub fn find_tools(tools_dir: &Path, rt_lib: &str) -> Result<Tools, String> {
     let python = tools_dir.join("python").join("python.exe");
-    let script = tools_dir.join("build").join("pkp_build.py");
+    let script = tools_dir.join("build").join(SCRIPT);
     let mut missing = Vec::new();
     if !python.is_file() {
         missing.push(python.display().to_string());
@@ -53,9 +60,9 @@ pub fn find_tools(tools_dir: &Path) -> Result<Tools, String> {
     if !script.is_file() {
         missing.push(script.display().to_string());
     }
-    for p in ["build/zig/zig.exe", "build/sdk/pkp_rt.lib", "build/recomp/nxrecomp/__main__.py"] {
-        if !tools_dir.join(p).is_file() {
-            missing.push(tools_dir.join(p).display().to_string());
+    for p in ["build/zig/zig.exe".to_string(), format!("build/sdk/{}", rt_lib), "build/recomp/nxrecomp/__main__.py".to_string()] {
+        if !tools_dir.join(&p).is_file() {
+            missing.push(tools_dir.join(&p).display().to_string());
         }
     }
     if !missing.is_empty() {
@@ -73,7 +80,7 @@ fn quiet(cmd: &mut Command) {
     }
 }
 
-/// Runs the build. Ok(true) = pkp.exe built, Ok(false) = paused, Err = what went wrong, in the script's words.
+/// Runs the build. Ok(true) = the exe built, Ok(false) = paused, Err = what went wrong, in the script's words.
 pub fn run(job: &Job, tools: &Tools, cancel: &AtomicBool, mut report: impl FnMut(Tick)) -> Result<bool, String> {
     let build = job.game_dir.join("build");
     fs::create_dir_all(&build).map_err(|e| format!("cannot create {}: {}", build.display(), e))?;

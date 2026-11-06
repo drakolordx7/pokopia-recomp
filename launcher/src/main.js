@@ -2,7 +2,7 @@ import './theme.css';
 import './layout.css';
 import './components.css';
 import { listen } from '@tauri-apps/api/event';
-import { api, icon, refreshIcons, errText, toast } from './util.js';
+import { api, esc, icon, refreshIcons, errText, toast } from './util.js';
 import * as play from './pages/play.js';
 import * as settings from './pages/settings.js';
 import * as setup from './pages/setup.js';
@@ -22,6 +22,7 @@ let statusHandler = null;
 let setupHandler = null;
 
 const ctx = {
+  game: null, // the game manifest as the pages need it (get_game), set in boot()
   go,
   onStatus(fn) { statusHandler = fn; },
   onSetup(fn) { setupHandler = fn; },
@@ -29,7 +30,7 @@ const ctx = {
 
 function drawNav() {
   nav.innerHTML =
-    `<div class="brand">${icon('gamepad-2', 'mark')}<span class="name">Pokopia Launcher</span></div>` +
+    `<div class="brand">${icon('gamepad-2', 'mark')}<span class="name">${esc(ctx.game ? ctx.game.launcher_name : 'Launcher')}</span></div>` +
     Object.entries(PAGES)
       .map(([id, p]) => `<button class="nav-item ${id === current ? 'active' : ''}" data-page="${id}">${icon(p.icon)}<span class="label">${p.label}</span></button>`)
       .join('');
@@ -53,6 +54,16 @@ async function go(page, opts = {}) {
 }
 
 async function boot() {
+  try {
+    ctx.game = await api('get_game');
+    document.title = ctx.game.window_title;
+  } catch (e) {
+    // no usable game.toml next to the launcher: nothing else can work
+    drawNav();
+    view.innerHTML = `<div class="page"><div class="banner danger">${icon('circle-x')}<div>${esc(errText(e))}</div></div></div>`;
+    refreshIcons();
+    return;
+  }
   await listen('game-status', (ev) => statusHandler && statusHandler(ev.payload));
   await listen('setup-status', (ev) => setupHandler && setupHandler(ev.payload));
   let cfg = { dump_dir: '' };

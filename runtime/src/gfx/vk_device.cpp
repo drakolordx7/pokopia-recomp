@@ -546,6 +546,7 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT avids = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT};
     VkPhysicalDeviceDynamicRenderingUnusedAttachmentsFeaturesEXT adrua = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT};
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT agpl = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT};
+    VkPhysicalDeviceFragmentShadingRateFeaturesKHR afsr = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR};
     VkPhysicalDeviceTransformFeedbackFeaturesEXT atfb = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT};
     VkPhysicalDeviceIndexTypeUint8FeaturesEXT au8 = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_INDEX_TYPE_UINT8_FEATURES_EXT};
     VkPhysicalDevicePresentIdFeaturesKHR apid = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR};
@@ -569,6 +570,10 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     const bool x_vids = add_ext(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME, &avids);
     const bool x_drua = add_ext(VK_EXT_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_EXTENSION_NAME, &adrua);
     const bool x_tfb = add_ext(VK_EXT_TRANSFORM_FEEDBACK_EXTENSION_NAME, &atfb);
+    // NVN2 smaller features (nvn_small.h): shading rate and conservative raster (the latter has no feature struct; its mode is set dynamically through EDS3)
+    const bool x_fsr = add_ext(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, &afsr);
+    const bool x_cr = has_dext(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
+    if (x_cr) dev_exts.push_back(VK_EXT_CONSERVATIVE_RASTERIZATION_EXTENSION_NAME);
     // 8-bit index buffers (the EXT and the KHR extension share the feature struct)
     const bool x_u8 = add_ext(VK_EXT_INDEX_TYPE_UINT8_EXTENSION_NAME, &au8) || add_ext("VK_KHR_index_type_uint8", &au8);
     // pipelines linked from separately compiled shader parts (nvn_gpl.cpp): needs VK_KHR_pipeline_library next to the extension itself
@@ -636,6 +641,8 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
     features_.vertex_input_dynamic_state = x_vids && avids.vertexInputDynamicState;
     features_.dynamic_rendering_unused_attachments = x_drua && adrua.dynamicRenderingUnusedAttachments;
     features_.transform_feedback = x_tfb && atfb.transformFeedback;
+    features_.fragment_shading_rate = x_fsr && afsr.pipelineFragmentShadingRate;
+    features_.conservative_raster_dynamic = x_cr && x_eds3 && aeds3.extendedDynamicState3ConservativeRasterizationMode && aeds3.extendedDynamicState3ExtraPrimitiveOverestimationSize;
     features_.index_type_uint8 = x_u8 && au8.indexTypeUint8;
     if (features_.transform_feedback) {   // transformFeedbackQueries is a property: the primitive counters of indirect draws under feedback need it
         VkPhysicalDeviceTransformFeedbackPropertiesEXT tfp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_PROPERTIES_EXT};
@@ -674,6 +681,26 @@ bool Device::init(const DeviceDesc& desc, std::string* error) {
         limits_.subgroup_size = p11.subgroupSize;
         limits_.subgroup_ops = p11.subgroupSupportedOperations;
         limits_.max_memory_allocation_count = props_.limits.maxMemoryAllocationCount;
+    }
+    if (features_.conservative_raster_dynamic) {
+        VkPhysicalDeviceConservativeRasterizationPropertiesEXT cp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONSERVATIVE_RASTERIZATION_PROPERTIES_EXT};
+        VkPhysicalDeviceProperties2 cpp = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &cp};
+        vkGetPhysicalDeviceProperties2(physical_, &cpp);
+        limits_.cons_max_extra = cp.maxExtraPrimitiveOverestimationSize;
+        limits_.cons_granularity = cp.extraPrimitiveOverestimationSizeGranularity;
+    }
+    if (features_.fragment_shading_rate && vkGetPhysicalDeviceFragmentShadingRatesKHR) {
+        uint32_t nr = 0;
+        vkGetPhysicalDeviceFragmentShadingRatesKHR(physical_, &nr, nullptr);
+        std::vector<VkPhysicalDeviceFragmentShadingRateKHR> rates(nr, {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR});
+        if (nr && vkGetPhysicalDeviceFragmentShadingRatesKHR(physical_, &nr, rates.data()) >= 0) {
+            for (uint32_t i = 0; i < nr; ++i) {
+                const uint32_t w = rates[i].fragmentSize.width, h = rates[i].fragmentSize.height;
+                if (!(rates[i].sampleCounts & VK_SAMPLE_COUNT_1_BIT) || w > 4 || h > 4 || (w & (w - 1)) || (h & (h - 1))) continue;
+                limits_.fsr_sizes |= 1u << ((w >= 4 ? 2u : w >= 2 ? 1u : 0u) * 3 + (h >= 4 ? 2u : h >= 2 ? 1u : 0u));
+            }
+        }
+        if (!limits_.fsr_sizes) features_.fragment_shading_rate = false;
     }
     if (!headless) dev_exts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     float prio = 1.0f;

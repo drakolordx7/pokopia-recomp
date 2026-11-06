@@ -46,7 +46,7 @@ idx	name	sdk_addr	ret	args	sig_source	nvn1_ret	nvn1_args	hexrays_nargs	class	not
 43	nvnCommandBufferAddCommandMemory	0x5C49C0	v	ppll	nvn1	v	ppll	5	same		1	used
 44	nvnCommandBufferAddControlMemory	0x5C4BB0	v	ppl	nvn1	v	ppl	5	same		1	used
 45	nvnCommandBufferBarrier	0x61CB70	v	pi	nvn1	v	pi	2	same		13	used
-46	nvnCommandBufferBeginDeviceCommands	0x5DC220	v	pp	hexrays			2	new	nvn2	0	unused
+46	nvnCommandBufferBeginDeviceCommands	0x5DC220	v	pp	sdk-verified			2	new	nvn2	0	unused
 47	nvnCommandBufferBeginRecording	0x5C4D20	v	p	nvn1	v	p	5	same		1	used
 48	nvnCommandBufferBeginTransformFeedback	0x608E40	v	pl	nvn1	v	pl	2	same		1	used
 49	nvnCommandBufferBindAccelerationStructure	0x600CE0	v	piil	hexrays			4	new	nvn2	0	unused
@@ -128,7 +128,7 @@ idx	name	sdk_addr	ret	args	sig_source	nvn1_ret	nvn1_args	hexrays_nargs	class	not
 125	nvnCommandBufferDrawTexture	0x60A6D0	v	plpp	nvn1	v	plpp	4	same		0	unused
 126	nvnCommandBufferDrawTransformFeedback	0x609460	v	pil	nvn1	v	pil	3	same		1	used
 127	nvnCommandBufferEnableExclusiveScissor	0x620EA0	v	pi	hexrays			2	new	nvn2	0	unused
-128	nvnCommandBufferEndDeviceCommands	0x5DC320	v	pl	hexrays			2	new	nvn2	0	unused
+128	nvnCommandBufferEndDeviceCommands	0x5DC320	v	pp	sdk-verified			2	new	nvn2	0	unused
 129	nvnCommandBufferEndRecording	0x5C4DE0	l	p	nvn1	l	p	5	same		1	used
 130	nvnCommandBufferEndTransformFeedback	0x608EB0	v	pl	nvn1	v	pl	2	same		8	used
 131	nvnCommandBufferEvaluateDlss	0x5DEBC0	v	pll	hexrays			3	new	nvn2	0	unused
@@ -245,7 +245,7 @@ idx	name	sdk_addr	ret	args	sig_source	nvn1_ret	nvn1_args	hexrays_nargs	class	not
 242	nvnCommandBufferSetZCullZF32CompressionEnable	0x60C6E0	v	pi	hexrays			2	new	nvn2	0	unused
 243	nvnCommandBufferShadingRateImagePalette	0x620D80	v	piil	hexrays			4	new	nvn2	0	unused
 244	nvnCommandBufferSignalEvent	0x5E1320	v	ppiiii	nvn1	v	ppiiii	6	same		0	unused
-245	nvnCommandBufferSubmitDeviceCommands	0x5DC680	v	pp	hexrays			2	new	nvn2	0	unused
+245	nvnCommandBufferSubmitDeviceCommands	0x5DC680	v	pp	sdk-verified			2	new	nvn2	0	unused
 246	nvnCommandBufferTiledDownsample	0x61E220	v	ppp	nvn1	v	ppp	3	same		0	unused
 247	nvnCommandBufferTiledDownsampleTextureView	0x61E230	v	ppppp	nvn1	v	ppppp	5	same		0	unused
 248	nvnCommandBufferUpdateUniformBuffer	0x60A4E0	v	pllllp	nvn1	v	pllllp	6	same		0	unused
@@ -268,12 +268,12 @@ idx	name	sdk_addr	ret	args	sig_source	nvn1_ret	nvn1_args	hexrays_nargs	class	not
 265	nvnDeviceBuilderSetDefaults	0x5D64F0	v	p	nvn1	v	p	1	same		1	used
 266	nvnDeviceBuilderSetFlags	0x5D6500	v	pi	nvn1	v	pi	2	same		1	used
 267	nvnDeviceCalculateAccelerationStructureMemoryRequirements	0x5F5040	l	plppp	hexrays			5	new	nvn2	0	unused
-268	nvnDeviceCommandBufferGetHandle	0x5DC200	l	p	hexrays			1	new	nvn2	0	unused
-269	nvnDeviceCommandBufferSetCommandMemorySize	0x5DC1E0	v	pl	hexrays			2	new	nvn2	0	unused
-270	nvnDeviceCommandBufferSetComputeMemorySize	0x5DC1F0	v	pl	hexrays			2	new	nvn2	0	unused
-271	nvnDeviceCommandBufferSetDefaults	0x5DC1A0	v	p	hexrays			1	new	nvn2	0	unused
-272	nvnDeviceCommandBufferSetDevice	0x5DC1C0	v	pl	hexrays			2	new	nvn2	0	unused
-273	nvnDeviceCommandBufferSetStorage	0x5DC1D0	v	plll	hexrays			4	new	nvn2	0	unused
+268	nvnDeviceCommandBufferGetHandle	0x5DC200	l	p	sdk-verified			1	new	nvn2	0	unused
+269	nvnDeviceCommandBufferSetCommandMemorySize	0x5DC1E0	v	pl	sdk-verified			2	new	nvn2	0	unused
+270	nvnDeviceCommandBufferSetComputeMemorySize	0x5DC1F0	v	pl	sdk-verified			2	new	nvn2	0	unused
+271	nvnDeviceCommandBufferSetDefaults	0x5DC1A0	v	p	sdk-verified			1	new	nvn2	0	unused
+272	nvnDeviceCommandBufferSetDevice	0x5DC1C0	v	pp	sdk-verified			2	new	nvn2	0	unused
+273	nvnDeviceCommandBufferSetStorage	0x5DC1D0	v	ppll	sdk-verified			4	new	nvn2	0	unused
 274	nvnDeviceCompactAccelerationStructure	0x5F7A50	l	plll	hexrays			4	new	nvn2	0	unused
 275	nvnDeviceCopyAccelerationStructure	0x5F7A30	v	plll	hexrays			4	new	nvn2	0	unused
 276	nvnDeviceFinalize	0x5D6510	v	p	nvn1	v	p	1	same		1	used

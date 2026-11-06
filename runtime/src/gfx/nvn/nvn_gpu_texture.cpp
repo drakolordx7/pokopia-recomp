@@ -659,7 +659,7 @@ TexGpu* tex_or_null(Texture* t, float want_scale = 1.0f) {
 float g_render_scale = 0.0f;
 float render_scale_now() {
     if (g_render_scale > 0.0f) return g_render_scale;
-    const std::string v = nxrt::config_get_str("gfx", "render_scale", "");
+    static const std::string v = nxrt::config_get_str("gfx", "render_scale", "");   // read once: this runs for every draw while unset
     float sc = 1.0f;
     if (!v.empty()) {
         sc = static_cast<float>(std::atof(v.c_str()));

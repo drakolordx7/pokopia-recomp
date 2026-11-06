@@ -470,3 +470,20 @@ NXTEST(session_plays_pcm16_voice_to_device_sink) {
     // Restore the default sink for later tests in the same process.
     nxrt::audio::set_sink(std::make_shared<nxrt::audio::NullSink>());
 }
+
+// Switch 2 native renderer tag: 'REv' (lower-case v) + the revision digit, native revisions run one past ours (Eglantine NX2_NOTES rows
+// 38-39). The tag is accepted up to revision 16 and an update header may differ from the open call in the case of the 'V' only.
+NXTEST(native_revision_tag_is_accepted_and_compared_by_number) {
+    constexpr int32_t kCase = 0x20 << 16;
+    const int32_t rev15 = BehaviourInfo::BaseRevisionMagic + BehaviourInfo::Revision15;
+    const int32_t rev16 = BehaviourInfo::BaseRevisionMagic + (16 << 24);
+    CHECK(BehaviourInfo::CheckValidRevision(rev15));
+    CHECK(BehaviourInfo::CheckValidRevision(rev15 + kCase));   // 'REv?'
+    CHECK(BehaviourInfo::CheckValidRevision(rev16 + kCase));   // native revision 16
+    CHECK(!BehaviourInfo::CheckValidRevision(rev16));          // 'REV' + 16 stays invalid
+    CHECK_EQ(BehaviourInfo::GetRevisionNumber(rev15 + kCase), 15);
+    CHECK(BehaviourInfo::SameRevision(rev15, rev15 + kCase));
+    CHECK(BehaviourInfo::SameRevision(rev15 + kCase, rev15));
+    CHECK(!BehaviourInfo::SameRevision(rev15, kRevision10 + kCase));
+    CHECK(!BehaviourInfo::SameRevision(rev15, rev15 + 1));
+}

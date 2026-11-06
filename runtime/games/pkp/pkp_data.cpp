@@ -1,29 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Pokémon Pokopia: who the game is and what its files are called (nxrt/game.h Info). Pure data, no runtime: the launcher links
-// this part alone.
+// this part alone. The values come from the game manifest (recomp/games/pkp/game.toml) through the generated game_manifest.h.
 #include "pkp_game.h"
+#include "game_manifest.h"
 
 namespace nxrt::games::pkp {
 
 const game::Info& data_info() {
     static const game::Info info = [] {
         game::Info g;
-        g.id = "pkp";
-        g.title = "Pokémon Pokopia";
-        g.product = "Pokémon Pokopia PC";
-        g.short_title = "Pokopia";
-        g.program_id = 0x0400A3A01EE4C000ull;
-        g.version = "2.0.1";
-        g.main_base = 0x7100000000ull;
+        g.id = GAME_ID;
+        g.title = GAME_TITLE;
+        g.product = GAME_PRODUCT;
+        g.short_title = GAME_SHORT_TITLE;
+        g.program_id = GAME_PROGRAM_ID;
+        g.version = GAME_TARGET_VERSION;
+        g.main_base = GAME_MAIN_BASE;
         // control.nacp is not in the dump yet: every language for now (bits of services::Language)
-        g.languages = 0x1ffffu;
-        g.platform = game::Platform::Switch2;
-        g.exe_name = "pkp.exe";
-        g.setup_exe_name = "pkp_setup.exe";
-        g.launcher_ini = "pkp_launcher.ini";
-        g.game_ini = "pkp.ini";
-        g.shader_pack = "shader_cache.pkpshc";
-        g.save_folder = "PokopiaRecompPC";
+        g.languages = GAME_LANGUAGES;
+        g.platform = game::Platform::GAME_PLATFORM;
+        g.exe_name = GAME_EXE;
+        g.setup_exe_name = GAME_SETUP_EXE;
+        g.launcher_ini = GAME_LAUNCHER_INI;
+        g.game_ini = GAME_INI;
+        g.shader_pack = GAME_SHADER_PACK;
+        g.save_folder = GAME_SAVE_FOLDER;
         return g;
     }();
     return info;

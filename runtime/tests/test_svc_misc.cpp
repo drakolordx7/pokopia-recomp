@@ -87,12 +87,18 @@ NXTEST(misc_hwopus_size_and_refusal) {
     const uint32_t size = sz.get<uint32_t>(0);
     CHECK(size != 0);
     CHECK_EQ(size % 0x1000u, 0u);                   // official user processes page-align this size
-    // OpenHardwareOpusDecoder (cmd 0): packed rate/channels, u32 work buffer size, transfer memory handle. No decoder here.
+    // OpenHardwareOpusDecoder (cmd 0): packed rate/channels, u32 work buffer size, transfer memory handle. There is no Opus decoder on
+    // the host, but the manager opens a decoder that decodes silence (Mario Kart World aborts on a refusal); it comes back as a session handle.
     services::ServiceEvent ev;
     const uint32_t h = ev.new_handle();
     REQUIRE(h != 0);
     nxsvc::Reply open = s.call(0, nxsvc::Args().u64(packed).u32(size).hcopy(h));
-    CHECK_EQ(open.result, kNotSupported);
+    CHECK(open.ok());
+    CHECK_EQ(open.move.size(), 1u);
+    for (uint32_t m : open.move) kernel::handle_close(m);
+    // The multistream decoders are still refused.
+    nxsvc::Reply ms = s.call(2, nxsvc::Args().u64(packed).u32(size).hcopy(h));
+    CHECK_EQ(ms.result, kNotSupported);
     kernel::handle_close(h);
 }
 

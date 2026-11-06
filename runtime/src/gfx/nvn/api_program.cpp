@@ -111,10 +111,14 @@ void nvnProgramSetDebugLabel(NVNprogram* program, const char* label) {
 NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderData* shaders) {
     Program* p = host_of<Program>(program);
     if (!p) return 0;
+    std::lock_guard pending_lk(p->pending_mu);   // the replay thread's program_resolve_pending
     for (int s = 0; s < 6; ++s) {
         p->stage[s] = nullptr;
         p->code_hash[s] = 0;
     }
+    p->pending.clear();
+    p->has_pending.store(false, std::memory_order_release);
+    p->missing_hard = false;
     p->missing[0] = 0;
     ++p->serial;
     p->linked = false;
@@ -126,8 +130,15 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     for (int k = 0; k < count; ++k) {
         const uint8_t* code = host_ptr(shaders[k].data);
         const uint8_t* control = static_cast<const uint8_t*>(shaders[k].control);
-        const ShaderInfo* si = (code && control) ? shader_cache().find(code, control) : nullptr;
+        ShaderCache::FindMiss miss;
+        const ShaderInfo* si = (code && control) ? shader_cache().find(code, control, &miss) : nullptr;
+        if (!si && miss.pending) {   // being translated on demand: the program's draws wait for it (program_resolve_pending)
+            p->pending.push_back(Program::PendingBlock{code, control, miss.hash});
+            all_found = false;
+            continue;
+        }
         if (!si) {
+            p->missing_hard = true;
             report_missing(code, control);
             if (code && control) {   // remembered for the trace of the program's binds and dispatches
                 const std::string key = missing_key(code, control);
@@ -142,12 +153,14 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
         if (stage < 0) {
             if (first_report("stage:" + si->hash))
                 NXLOG_W("nvn", "nvnProgramSetShaders: block %s is a stage the back end does not run; program not linked", si->hash.c_str());
+            p->missing_hard = true;
             all_found = false;
             continue;
         }
         p->stage[stage] = si;
         p->code_hash[stage] = parse_hash(si->hash);
     }
+    p->has_pending.store(!p->pending.empty(), std::memory_order_release);
     p->linked = all_found;
     if (all_found && gpu::active()) gpu::prewarm_program_shaders(p->stage);
     // A block missing from the shader cache leaves the program unlinked (its draws are skipped). The call still reports success: the game treats a
@@ -156,6 +169,52 @@ NVNboolean nvnProgramSetShaders(NVNprogram* program, int count, const NVNshaderD
     static const bool accept_unlinked = config_get_bool("nvn", "accept_unlinked", true);
     return (all_found || (accept_unlinked && addresses_ok)) ? 1 : 0;
 }
+
+}  // namespace
+
+bool be::program_resolve_pending(Program* p) {
+    if (!p || !p->has_pending.load(std::memory_order_acquire)) return false;
+    std::unique_lock lk(p->pending_mu, std::try_to_lock);
+    if (!lk.owns_lock()) return true;   // SetShaders is replacing the program right now
+    using St = ShaderTranslatorClient::State;
+    ShaderCache& cache = shader_cache();
+    std::vector<Program::PendingBlock> keep;
+    bool changed = false;
+    for (Program::PendingBlock& b : p->pending) {
+        if (cache.translator_state(b.hash) == St::Pending) {   // cheap: no pass over the block until the translator answered
+            keep.push_back(std::move(b));
+            continue;
+        }
+        ShaderCache::FindMiss miss;
+        const ShaderInfo* si = cache.find(b.code, b.control, &miss);
+        if (!si) {
+            if (miss.pending) {
+                keep.push_back(std::move(b));
+            } else {
+                p->missing_hard = true;   // the translator could not do it: missing, as without on-demand translation
+                report_missing(b.code, b.control);
+            }
+            continue;
+        }
+        const int stage = nvn_stage_of(si->stage);
+        if (stage < 0) {
+            p->missing_hard = true;
+            continue;
+        }
+        p->stage[stage] = si;
+        p->code_hash[stage] = parse_hash(si->hash);
+        changed = true;
+    }
+    p->pending = std::move(keep);
+    if (changed) ++p->serial;
+    if (!p->pending.empty()) return true;
+    p->has_pending.store(false, std::memory_order_release);
+    p->linked = !p->missing_hard;
+    p->gpl_bound.store(0, std::memory_order_relaxed);   // the next bind queues the new stages' pipeline parts
+    return false;
+}
+
+namespace {
 
 // The Ext entry: NVNshaderData plus one more word (see the header comment).
 struct ShaderDataExt {
@@ -185,8 +244,25 @@ NVNboolean nvnProgramSetSubroutineLinkage(NVNprogram* program, int stage, const 
 
 // Assumed signature (see the header comment). The back end keeps no sample-shading state yet, so this only validates.
 void nvnProgramSetSampleShading(NVNprogram* program, int mode) {
-    (void)mode;
-    if (!host_of<Program>(program)) return;
+    // sdk 0x5E5DB0: the mode is a 4-bit field (bits 28..31 of the program word at +0x80). Kept on the program; pipelines do not use it.
+    if (Program* p = host_of<Program>(program)) p->sample_shading = static_cast<uint32_t>(mode) & 0xFu;
+}
+
+// NVN2 only: nvnProgramInitializeFromBuilder(program, builder) (sdk 0x5E6CB0). Initialize + the builder's shaders (count at +0x28, NVNshaderData
+// array at +0x30) + its sample shading (+0x18). The ray-tracing modules and recursion depths in the builder are not used by this back end.
+NVNboolean nvnProgramInitializeFromBuilder(NVNprogram* program, const NVNprogramBuilder* builder) {
+    if (!program || !builder) return 0;
+    const uint8_t* b = reinterpret_cast<const uint8_t*>(builder);
+    int32_t count;
+    uint64_t shaders;
+    uint32_t sample;
+    std::memcpy(&sample, b + 0x18, 4);
+    std::memcpy(&count, b + 0x28, 4);
+    std::memcpy(&shaders, b + 0x30, 8);
+    if (!nvnProgramInitialize(program, nullptr)) return 0;
+    nvnProgramSetSampleShading(program, static_cast<int>(sample));
+    if (count <= 0) return 1;
+    return nvnProgramSetShaders(program, count, reinterpret_cast<const NVNshaderData*>(static_cast<uintptr_t>(shaders)));
 }
 
 // NVN 55 name the game asks for and never calls (signature assumed): the sub-tile size is not modelled; it reports 0 x 0.
@@ -207,6 +283,7 @@ void register_api_program() {
     NVN_REG(nvnProgramSetShadersExt);
     NVN_REG(nvnProgramSetSubroutineLinkage);
     NVN_REG(nvnProgramSetSampleShading);
+    NVN2_REG(nvnProgramInitializeFromBuilder);
 }
 
 }  // namespace nxrt::nvn

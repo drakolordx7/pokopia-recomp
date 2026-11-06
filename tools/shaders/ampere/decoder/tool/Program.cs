@@ -6,6 +6,12 @@
 //             per-mnemonic gaps and example mismatches.
 //   --corpus  <corpus dir> [--jobs 4]   decode the whole corpus (every unique block's program range), counts only.
 //   --dump    <code.bin> <ctrl.bin>      print one block.
+//   --census  <corpus dir> --out <census.tsv> [--blocks <blocks.tsv>] [--examples K] [--all-blocks] [--jobs 4]
+//             instruction census of a corpus (Pokopia layout: unique.tsv + code/ + ctrl/; runtime dump layout: manifest.tsv + code_<h>.bin
+//             + ctrl_<h>.bin, duplicate rows folded): one row per opcode + modifier combination with its count, the number of distinct
+//             blocks containing it, blocks per stage, example block hashes (K smallest, default 5; --all-blocks lists every one),
+//             a decode class (ok | partial = a modifier or form the decoder flagged as unknown | undecoded = unknown opcode) and, for
+//             undecoded and partial rows, the instruction word of the smallest-hash block that holds it.
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -29,7 +35,9 @@ static class Program
         if (args.Length >= 3 && args[0] == "--verify") return Verify(args[1], args[2], args.Skip(3).ToArray());
         if (args.Length >= 2 && args[0] == "--corpus") return WholeCorpus(args[1], args.Skip(2).ToArray());
         if (args.Length >= 3 && args[0] == "--dump") return Dump(args[1], args[2]);
+        if (args.Length >= 4 && args[0] == "--census") return Census(args[1], args.Skip(2).ToArray());
         Console.Error.WriteLine("usage: sassdecode --verify <oracle dir> <corpus dir> [--every N] [--show OPC] [--examples K] [--jobs N]\n" +
+                                "       sassdecode --census <corpus dir> --out <census.tsv> [--blocks <blocks.tsv>] [--examples K] [--all-blocks] [--jobs N]\n" +
                                 "       sassdecode --corpus <corpus dir> [--jobs N]\n       sassdecode --dump <code.bin> <ctrl.bin>");
         return 2;
     }
@@ -141,6 +149,128 @@ static class Program
             Interlocked.Add(ref bytes, end - start);
         });
         Console.WriteLine($"blocks {rows.Count}  program bytes {bytes}  instructions {nInst}  unknown-opcode {nUnknown}  [{sw.Elapsed.TotalSeconds:F1}s]");
+        return 0;
+    }
+
+    sealed class Agg
+    {
+        public long Count;
+        public int Blocks;
+        public readonly int[] Stage = new int[8];            // distinct blocks per control stage value (0 vs .. 5 cs, 6 and 7+ = above)
+        public readonly SortedSet<string> Examples = new(StringComparer.Ordinal);
+        public string Decode = "ok";
+        public string ExHash = "";                            // smallest-hash block that holds the row (undecoded / partial rows)
+        public int ExAddr;
+        public ulong ExLo, ExHi;
+    }
+
+    /// Corpus rows as (code hash, code path, ctrl path): Pokopia layout (unique.tsv) or runtime dump layout (manifest.tsv, duplicates folded).
+    static List<(string hash, string code, string ctrl)> CorpusRows(string dir)
+    {
+        var rows = new List<(string, string, string)>();
+        string uniq = Path.Combine(dir, "unique.tsv"), man = Path.Combine(dir, "manifest.tsv");
+        if (File.Exists(uniq))
+        {
+            foreach (var l in File.ReadLines(uniq).Skip(1))
+            {
+                var f = l.Split('\t');
+                rows.Add((f[0], Path.Combine(dir, "code", f[0] + ".bin"), Path.Combine(dir, "ctrl", f[9] + ".bin")));
+            }
+        }
+        else if (File.Exists(man))
+        {
+            var seen = new HashSet<string>();
+            foreach (var l in File.ReadLines(man).Skip(1))
+            {
+                var f = l.Split('\t');
+                if (f.Length < 13 || !seen.Add(f[10])) continue;
+                rows.Add((f[10], Path.Combine(dir, f[11]), Path.Combine(dir, f[12])));
+            }
+        }
+        else throw new FileNotFoundException("no unique.tsv or manifest.tsv in " + dir);
+        return rows;
+    }
+
+    static bool Partial(SassInst i)
+    {
+        foreach (var m in i.Mods) if (m.StartsWith("?")) return true;
+        foreach (var o in i.Operands) if (o.Text.StartsWith("?")) return true;
+        return false;
+    }
+
+    static int Census(string corpus, string[] a)
+    {
+        int jobs = int.Parse(Opt(a, "--jobs", "4"));
+        int examples = int.Parse(Opt(a, "--examples", "5"));
+        bool all = Array.IndexOf(a, "--all-blocks") >= 0;
+        string outPath = Opt(a, "--out", "");
+        string blocksPath = Opt(a, "--blocks", "");
+        if (outPath.Length == 0) { Console.Error.WriteLine("--census needs --out <census.tsv>"); return 2; }
+        var rows = CorpusRows(corpus);
+        var global = new Dictionary<string, Agg>();
+        var blockRows = new ConcurrentBag<string>();
+        long nInst = 0, skipped = 0;
+        var sw = Stopwatch.StartNew();
+        Parallel.ForEach(rows, new ParallelOptions { MaxDegreeOfParallelism = jobs }, r =>
+        {
+            byte[] code, ctrl;
+            try { code = File.ReadAllBytes(r.code); ctrl = File.ReadAllBytes(r.ctrl); }
+            catch (IOException) { Interlocked.Increment(ref skipped); return; }
+            if (ctrl.Length < 0x58 || BitConverter.ToUInt32(ctrl, 0) != 0x98761234) { Interlocked.Increment(ref skipped); return; }
+            int stage = BitConverter.ToUInt16(ctrl, 0x56);
+            var (start, end) = Program_(code, ctrl);
+            if (end <= start) { Interlocked.Increment(ref skipped); return; }
+            var insts = SassDecoder.DecodeBlock(code, start, end);
+            var local = new Dictionary<string, (long n, string cls, SassInst first)>();
+            long unk = 0, part = 0;
+            foreach (var i in insts)
+            {
+                bool undec = i.Opcode.StartsWith(".UNKNOWN");
+                bool partial = !undec && Partial(i);
+                string key = i.Opcode + "\t" + string.Join(".", i.Mods);
+                string cls = undec ? "undecoded" : partial ? "partial" : "ok";
+                if (undec) unk++; else if (partial) part++;
+                if (local.TryGetValue(key, out var e)) local[key] = (e.n + 1, e.cls, e.first);
+                else local[key] = (1, cls, i);
+            }
+            lock (global)
+            {
+                foreach (var kv in local)
+                {
+                    if (!global.TryGetValue(kv.Key, out var g)) global[kv.Key] = g = new Agg();
+                    g.Count += kv.Value.n;
+                    g.Blocks++;
+                    g.Stage[Math.Min(stage, 7)]++;
+                    if (kv.Value.cls != "ok" && (g.ExHash.Length == 0 || string.CompareOrdinal(r.hash, g.ExHash) < 0))
+                    {
+                        g.Decode = kv.Value.cls;
+                        g.ExHash = r.hash; g.ExAddr = kv.Value.first.Address; g.ExLo = kv.Value.first.Lo; g.ExHi = kv.Value.first.Hi;
+                    }
+                    g.Examples.Add(r.hash);
+                    if (!all && examples > 0 && g.Examples.Count > examples) g.Examples.Remove(g.Examples.Max!);
+                }
+            }
+            Interlocked.Add(ref nInst, insts.Count);
+            var ops = string.Join(" ", local.Keys.Select(k => k.TrimEnd('\t').Replace('\t', '.')).OrderBy(k => k, StringComparer.Ordinal));
+            blockRows.Add($"{r.hash}\t{stage}\t{insts.Count}\t{unk}\t{part}\t{ops}");
+        });
+        string[] sn = { "vs", "ps", "gs", "tcs", "tes", "cs", "stage6", "stage7+" };
+        using (var w = new StreamWriter(outPath, false, new UTF8Encoding(false)))
+        {
+            w.NewLine = "\n";
+            w.WriteLine("opcode\tmodifiers\tcount\tblocks\tstage_blocks\tdecode\texample_blocks\texample_addr\texample_lo\texample_hi");
+            foreach (var kv in global.OrderBy(k => k.Key.Split('\t')[0], StringComparer.Ordinal).ThenByDescending(k => k.Value.Count).ThenBy(k => k.Key, StringComparer.Ordinal))
+            {
+                var g = kv.Value;
+                var st = string.Join(";", Enumerable.Range(0, 8).Where(k => g.Stage[k] > 0).Select(k => sn[k] + "=" + g.Stage[k]));
+                bool ex = g.Decode != "ok";
+                w.WriteLine($"{kv.Key}\t{g.Count}\t{g.Blocks}\t{st}\t{g.Decode}\t{string.Join(",", g.Examples)}\t" +
+                            (ex ? $"0x{g.ExAddr:x}\t0x{g.ExLo:x16}\t0x{g.ExHi:x16}" : "\t\t"));
+            }
+        }
+        if (blocksPath.Length > 0)
+            File.WriteAllLines(blocksPath, new[] { "hash\tstage\tinstructions\tundecoded\tpartial\tops" }.Concat(blockRows.OrderBy(s => s, StringComparer.Ordinal)));
+        Console.WriteLine($"blocks {rows.Count - skipped} (skipped {skipped})  instructions {nInst}  rows {global.Count}  [{sw.Elapsed.TotalSeconds:F1}s]");
         return 0;
     }
 

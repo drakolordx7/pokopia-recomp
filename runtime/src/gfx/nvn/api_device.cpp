@@ -161,21 +161,37 @@ void nvnDeviceSetDepthMode(NVNdevice* device, NVNdepthMode mode) {
     }
 }
 
-NVNboolean nvnDeviceRegisterFastClearColor(NVNdevice* device, const float*, NVNformat) {
-    return be::host_of<be::Device>(device) ? 1 : 0;
+// Fast-clear registration (sdk 0x5D6920..0x5D69E0; the table is FastClearTables in nvn_small.h). Vulkan has no fast-clear table, so this
+// keeps the registry only: it accepts and refuses the values the console does and hands out a stable index. A null value is refused.
+int register_color(NVNdevice* device, uint32_t kind, const void* color, NVNformat format) {
+    be::Device* dev = be::host_of<be::Device>(device);
+    if (!dev || !color) return -1;
+    uint32_t v[4];
+    std::memcpy(v, color, sizeof v);
+    return dev->fast_clear.add_color(kind, v, static_cast<uint32_t>(format));
+}
+int register_depth(NVNdevice* device, float value) {
+    be::Device* dev = be::host_of<be::Device>(device);
+    return dev ? dev->fast_clear.add_depth(value) : -1;
+}
+int register_stencil(NVNdevice* device, int value, int format) {
+    be::Device* dev = be::host_of<be::Device>(device);
+    return dev ? dev->fast_clear.add_stencil(static_cast<uint32_t>(value), static_cast<uint32_t>(format)) : -1;
 }
 
-NVNboolean nvnDeviceRegisterFastClearColori(NVNdevice* device, const int*, NVNformat) {
-    return be::host_of<be::Device>(device) ? 1 : 0;
-}
-
-NVNboolean nvnDeviceRegisterFastClearColorui(NVNdevice* device, const uint32_t*, NVNformat) {
-    return be::host_of<be::Device>(device) ? 1 : 0;
-}
-
-NVNboolean nvnDeviceRegisterFastClearDepth(NVNdevice* device, float) {
-    return be::host_of<be::Device>(device) ? 1 : 0;
-}
+NVNboolean nvnDeviceRegisterFastClearColor(NVNdevice* device, const float* color, NVNformat format) { return register_color(device, 0, color, format) >= 0; }
+NVNboolean nvnDeviceRegisterFastClearColori(NVNdevice* device, const int* color, NVNformat format) { return register_color(device, 1, color, format) >= 0; }
+NVNboolean nvnDeviceRegisterFastClearColorui(NVNdevice* device, const uint32_t* color, NVNformat format) { return register_color(device, 2, color, format) >= 0; }
+NVNboolean nvnDeviceRegisterFastClearDepth(NVNdevice* device, float value) { return register_depth(device, value) >= 0; }
+// NVN2 only (not in the NVN1 table). The *Index calls return the registry index (-1: refused); signatures read from the sdk (0x5D6930 and the
+// other thunks into 0x6179F0 / 0x617D00 / 0x617D20 / 0x617E40): (device, value, format) and (device, value); stencil takes the value, and the
+// index form also the depth-stencil format.
+int nvnDeviceRegisterFastClearColorIndex(NVNdevice* device, const float* color, NVNformat format) { return register_color(device, 0, color, format); }
+int nvnDeviceRegisterFastClearColoriIndex(NVNdevice* device, const int* color, NVNformat format) { return register_color(device, 1, color, format); }
+int nvnDeviceRegisterFastClearColoruiIndex(NVNdevice* device, const uint32_t* color, NVNformat format) { return register_color(device, 2, color, format); }
+int nvnDeviceRegisterFastClearDepthIndex(NVNdevice* device, float value) { return register_depth(device, value); }
+NVNboolean nvnDeviceRegisterFastClearStencil(NVNdevice* device, int value) { return register_stencil(device, value, 0) >= 0; }
+int nvnDeviceRegisterFastClearStencilIndex(NVNdevice* device, int value, NVNformat format) { return register_stencil(device, value, static_cast<int>(format)); }
 
 NVNwindowOriginMode nvnDeviceGetWindowOriginMode(const NVNdevice* device) {
     const be::Device* dev = be::host_of<be::Device>(device);
@@ -562,6 +578,12 @@ void register_api_device() {
     NVN_REG(nvnDeviceRegisterFastClearColori);
     NVN_REG(nvnDeviceRegisterFastClearColorui);
     NVN_REG(nvnDeviceRegisterFastClearDepth);
+    NVN2_REG(nvnDeviceRegisterFastClearColorIndex);
+    NVN2_REG(nvnDeviceRegisterFastClearColoriIndex);
+    NVN2_REG(nvnDeviceRegisterFastClearColoruiIndex);
+    NVN2_REG(nvnDeviceRegisterFastClearDepthIndex);
+    NVN2_REG(nvnDeviceRegisterFastClearStencil);
+    NVN2_REG(nvnDeviceRegisterFastClearStencilIndex);
     NVN_REG(nvnDeviceGetWindowOriginMode);
     NVN_REG(nvnDeviceGetDepthMode);
     NVN_REG(nvnDeviceGetTimestampInNanoseconds);

@@ -203,6 +203,13 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 `src/services/pl.cpp` uses DejaVu Sans (`DejaVuSans.ttf`) as the fallback shared font. The font file is not in this worktree. Its licence text is `assets/fonts/LICENSE-DejaVu.txt` (in the `svc-pl` worktree, with the font at `assets/fonts/DejaVuSans.ttf`), the Bitstream Vera licence as the DejaVu fonts name it. Not copied here.
 
+## zstd 1.5.7 with ZBIC (hexkyz/zstd), decoder only (BSD-3-Clause)
+
+Files: `third_party/zstd_zbic/zstddeclib.c`. Copyright (c) Meta Platforms, Inc. and affiliates; ZBIC changes by hexkyz, under zstd's
+dual BSD / GPLv2 licence, taken under the BSD option. Licence text: `third_party/zstd_zbic/LICENSE`. Source:
+https://github.com/hexkyz/zstd, commit 02a8f10c6f4acfcfba2e31e034fbae9f07938f96, amalgamated with zstd's `combine.py` (provenance and
+hashes in `third_party/zstd_zbic/README.txt`). Used by `src/loader/zbic.cpp` for ZBIC-compressed NSO segments (`docs/zbic.md`).
+
 ## AMD FidelityFX SDK v1.1.4, FSR 1 shader headers (MIT)
 
 Files: `third_party/ffx_fsr1/` (`fsr1/ffx_fsr1.h`, `ffx_core*.h`, `ffx_common_types.h` and the other headers listed in `third_party/ffx_fsr1/README.txt`). Copyright (C) 2024 Advanced Micro Devices, Inc. Licence text: `third_party/ffx_fsr1/LICENSE.txt`. Source: https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK, tag v1.1.4. Used by `src/gfx/extras/`: the EASU and RCAS compute shaders are generated from these headers by `scripts/gen_extras_shaders.py`, and the constant setup is a port in `src/gfx/extras/fsr1_consts.cpp`.

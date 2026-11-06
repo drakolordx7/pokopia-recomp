@@ -41,7 +41,7 @@ namespace SpirvHarness
         public List<string> Unsupported = new();
     }
 
-    static class Program
+    static partial class Program
     {
         const uint ComputeMagic = 0x12345679;
         static readonly TimeSpan Timeout = TimeSpan.FromSeconds(60);
@@ -60,7 +60,9 @@ namespace SpirvHarness
             Debug = args.Contains("--debug-mode");
             try
             {
+                if (args.Length >= 1 && args[0] == "--serve") return Serve(args);
                 if (args.Length >= 2 && args[0] == "--batch") return Batch(args);
+                if (args.Length >= 2 && args[0] == "--hwcheck") return Hwcheck(args);
                 if (args.Length >= 2 && !args[0].StartsWith("-")) return Single(args);
             }
             catch (ArgumentException e)
@@ -68,8 +70,58 @@ namespace SpirvHarness
                 Console.Error.WriteLine(e.Message);
             }
             Console.Error.WriteLine("usage: spirv_harness <code.bin> <ctrl.bin> [-o out.spv] [--glsl] [--glslc <GLSLC output, NVN2>]\n" +
+                                    "       spirv_harness --serve --cache <spirv dir> [--corpus <dir>] [--jobs N] [--priority below|idle|normal]   (protocol: Serve.cs)\n" +
                                     "       spirv_harness --batch <extracted dir> --out <dir> [--jobs N] [--limit N] [--no-val] [--no-retry] [--debug-mode] [--target-env E] [--host desktop|moltenvk] [--spirv-val PATH] [--reflect <Ampere corpus>]");
             return 2;
+        }
+
+        // --hwcheck <cases.tsv> --out <dir> [--local-x 32]: hardware-check modules (tools/shaders/hwcheck). Each line of cases.tsv is
+        // "<id>	<lo hi lo hi ...>[	<memory test>]" (16-hex-digit instruction words; memory test: AmpereHwcheck.cs); writes <dir>/<id>.spv (a compute module that runs the decoded
+        // instructions on the register file in storage buffer set 1 binding 0, see ampere/frontend/AmpereHwcheck.cs) and
+        // <dir>/hwcheck.tsv (id, status, sass text, error). Status: ok, unsupported (the front end refuses a form), exception.
+        static int Hwcheck(string[] args)
+        {
+            string outDir = Opt(args, "--out", null) ?? throw new ArgumentException("--out required");
+            int localX = int.Parse(Opt(args, "--local-x", "32"));
+            Directory.CreateDirectory(outDir);
+            byte[] ctrl = new byte[0xd8];
+            BitConverter.GetBytes(0x98761234u).CopyTo(ctrl, 0);
+            BitConverter.GetBytes(201u).CopyTo(ctrl, 4);
+            BitConverter.GetBytes((ushort)5).CopyTo(ctrl, 0x56);
+            BitConverter.GetBytes(localX).CopyTo(ctrl, 0x58);
+            BitConverter.GetBytes(1).CopyTo(ctrl, 0x5c);
+            BitConverter.GetBytes(1).CopyTo(ctrl, 0x60);
+            BitConverter.GetBytes(AmpereTranslator.HwcheckSharedBytes).CopyTo(ctrl, 0x64);   // shared memory size (+0x64; +0x50 is local memory), declared only when a test uses it
+            var lines = File.ReadAllLines(args[1]).Where(l => l.Length > 0 && l[0] != '#').ToList();
+            var rows = new string[lines.Count];
+            Parallel.For(0, lines.Count, new ParallelOptions { MaxDegreeOfParallelism = 4 }, k =>
+            {
+                string[] f = lines[k].Split('\t');
+                string id = f[0];
+                ulong[] w = f[1].Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(x => Convert.ToUInt64(x, 16)).ToArray();
+                var insts = new List<SassInst>();
+                for (int n = 0; n + 1 < w.Length; n += 2) insts.Add(SassDecoder.Decode(w[n], w[n + 1], n * 8));
+                string text = string.Join(" | ", insts.Select(x => x.ToSassText()));
+                string status = "ok", err = "";
+                try
+                {
+                    StaticGpuAccessor gpu = new(Array.Empty<byte>(), 0, 0, ShaderStage.Compute, ctrl);
+                    TranslationOptions options = new(TargetLanguage.Spirv, TargetApi.Vulkan, TranslationFlags.Compute);
+                    TranslatorContext tctx = AmpereTranslator.CreateHwcheckContext(gpu, options, insts, out AmpereProgram prog, f.Length > 2 ? f[2] : null);
+                    ShaderProgram sp = tctx.Translate();
+                    if (prog.Unsupported.Count > 0) { status = "unsupported"; err = string.Join("; ", prog.Unsupported); }
+                    else File.WriteAllBytes(Path.Combine(outDir, id + ".spv"), sp.BinaryCode);
+                }
+                catch (Exception e)
+                {
+                    status = "exception";
+                    err = $"{e.GetType().Name}: {e.Message}";
+                }
+                rows[k] = $"{id}\t{status}\t{text}\t{err.Replace('\t', ' ').Replace('\n', ' ')}";
+            });
+            File.WriteAllLines(Path.Combine(outDir, "hwcheck.tsv"), rows);
+            Console.WriteLine($"hwcheck: {rows.Count(r => r.Split('\t')[1] == "ok")} of {rows.Length} translated -> {outDir}");
+            return 0;
         }
 
         // spirv-val: $VULKAN_SDK\Bin, else the PATH.
@@ -385,6 +437,10 @@ namespace SpirvHarness
             if (limit > 0) jobs = jobs.Take(limit).ToList();
             Console.WriteLine($"{jobs.Count} distinct code blocks, {jobsN} jobs, validation {(validate ? targetEnv : "off")}");
 
+            // Each Parallel.ForEach body waits on a pool task (the timeout guard): without spare pool threads those tasks queue behind the
+            // waiting bodies and the pool adds threads slowly, so fewer than --jobs blocks run at once.
+            ThreadPool.GetMinThreads(out int minW, out int minIo);
+            ThreadPool.SetMinThreads(Math.Max(minW, jobsN * 2 + 4), minIo);
             ConcurrentBag<Result> results = new();
             int done = 0;
             Stopwatch total = Stopwatch.StartNew();
@@ -445,13 +501,19 @@ namespace SpirvHarness
         static void WriteResults(string path, List<Result> all)
         {
             using StreamWriter w = new(path) { NewLine = "\n" };  // LF on Windows too: same bytes as on macOS
-            w.WriteLine("hash\tgroup\tstage\tstages_using\tstatus\tms\tspv_bytes\tresources\ttranslator_messages\terror\tdraw_time_queries\tglslc_reflection");
-            foreach (Result r in all)
-            {
-                string err = (r.Error + " " + r.ValError).Trim().Replace('\t', ' ').Replace('\n', ' ');
-                w.WriteLine($"{r.Hash}\t{r.Group}\t{r.Stage}\t{r.Stages}\t{r.Status}\t{r.Ms:F1}\t{r.SpvBytes}\t{r.Resources}\t" +
-                            $"{string.Join(" | ", r.Messages).Replace('\t', ' ')}\t{err}\t{r.Queries}\t{r.Reflection}");
-            }
+            w.WriteLine(ResultsHeader);
+            foreach (Result r in all) w.WriteLine(FormatRow(r));
+        }
+
+        const string ResultsHeader = "hash\tgroup\tstage\tstages_using\tstatus\tms\tspv_bytes\tresources\ttranslator_messages\terror\tdraw_time_queries\tglslc_reflection";
+
+        // One results.tsv line, without CR/LF in it (--serve also sends it as one stdout line).
+        static string FormatRow(Result r)
+        {
+            string err = (r.Error + " " + r.ValError).Trim().Replace('\t', ' ');
+            string row = $"{r.Hash}\t{r.Group}\t{r.Stage}\t{r.Stages}\t{r.Status}\t{r.Ms:F1}\t{r.SpvBytes}\t{r.Resources}\t" +
+                         $"{string.Join(" | ", r.Messages).Replace('\t', ' ')}\t{err}\t{r.Queries}\t{r.Reflection}";
+            return row.Replace('\r', ' ').Replace('\n', ' ');
         }
 
         // Group messages that differ only in numbers ("Attribute offset 0x3A0 ..." etc.) so the summary stays short.

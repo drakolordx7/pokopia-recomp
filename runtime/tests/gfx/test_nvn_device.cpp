@@ -202,9 +202,14 @@ NXTEST(device_handles_timestamps_and_debug_domains) {
 
     CHECK(P<NVNboolean(const NVNdevice*)>("nvnDeviceIsExternalDebuggerAttached")(&dev) == 0);
     P<NVNboolean(NVNdevice*, float)>("nvnDeviceRegisterFastClearDepth")(&dev, 1.0f);
-    CHECK(P<NVNboolean(NVNdevice*, const float*, NVNformat)>("nvnDeviceRegisterFastClearColor")(&dev, nullptr, NVN_FORMAT_RGBA8) == 1);
-    CHECK(P<NVNboolean(NVNdevice*, const int*, NVNformat)>("nvnDeviceRegisterFastClearColori")(&dev, nullptr, NVN_FORMAT_RGBA8) == 1);
-    CHECK(P<NVNboolean(NVNdevice*, const uint32_t*, NVNformat)>("nvnDeviceRegisterFastClearColorui")(&dev, nullptr, NVN_FORMAT_RGBA8) == 1);
+    // fast-clear registry (nvn_small.h; the details are in test_nvn_small.cpp): real values are accepted, a null value is refused
+    const float fc[4] = {0, 0, 0, 1};
+    const int fci[4] = {1, 2, 3, 4};
+    const uint32_t fcu[4] = {1, 2, 3, 4};
+    CHECK(P<NVNboolean(NVNdevice*, const float*, NVNformat)>("nvnDeviceRegisterFastClearColor")(&dev, fc, NVN_FORMAT_RGBA8) == 1);
+    CHECK(P<NVNboolean(NVNdevice*, const int*, NVNformat)>("nvnDeviceRegisterFastClearColori")(&dev, fci, NVN_FORMAT_RGBA8I) == 1);
+    CHECK(P<NVNboolean(NVNdevice*, const uint32_t*, NVNformat)>("nvnDeviceRegisterFastClearColorui")(&dev, fcu, NVN_FORMAT_RGBA8I) == 1);
+    CHECK(P<NVNboolean(NVNdevice*, const float*, NVNformat)>("nvnDeviceRegisterFastClearColor")(&dev, nullptr, NVN_FORMAT_RGBA8) == 0);
 
     P<void(NVNdevice*, const char*)>("nvnDeviceSetDebugLabel")(&dev, "device under test");
     P<void(NVNdevice*, int)>("nvnDeviceSetIntermediateShaderCache")(&dev, 1);

@@ -9,7 +9,9 @@
 
 #include <cstdio>
 #include "nxrt/diag.h"
+#include "nxrt/config.h"
 #include "nxrt/dispatch.h"
+#include "nxrt/game.h"
 #include "nxrt/kernel.h"
 #include "nxrt/log.h"
 #include "nxrt/runtime.h"
@@ -67,8 +69,37 @@ void svc_start_thread(::Ctx* c) { svc_ret(c, thread_start(static_cast<uint32_t>(
 
 void svc_exit_thread(::Ctx*) { thread_exit(); }
 
+// The registered game's polling sleeps (nxrt/game.h PollSleep), as absolute return addresses; empty while [sched] poll_sleeps is off.
+struct PollSleeps {
+    uint64_t ret[32] = {};
+    int64_t ns[32] = {};
+    uint32_t n = 0;
+};
+const PollSleeps& poll_sleeps() {
+    static const PollSleeps t = [] {
+        PollSleeps p;
+        const game::Info& g = game::info();
+        if (!g.poll_sleeps || !g.poll_sleep_count || !config_get_bool("sched", "poll_sleeps", true)) return p;
+        for (uint32_t i = 0; i < g.poll_sleep_count && p.n < 32; ++i, ++p.n) {
+            p.ret[p.n] = g.main_base + g.poll_sleeps[i].ret;
+            p.ns[p.n] = g.poll_sleeps[i].ns;
+        }
+        NXLOG_I("svc", "[sched] poll_sleeps: %u sleeps in the game's polling loops are shortened", p.n);
+        return p;
+    }();
+    return t;
+}
+
 void svc_sleep_thread(::Ctx* c) {              // x0 ns (0, -1, -2 = yield variants)
     int64_t ns = static_cast<int64_t>(X(c, 0));
+    if (ns >= 1000000) {   // nn::os::SleepThread is a leaf that ends in the svc, so lr is the game's call site
+        const PollSleeps& p = poll_sleeps();
+        for (uint32_t i = 0; i < p.n; ++i)
+            if (p.ret[i] == X(c, 30)) {
+                if (p.ns[i] < ns) ns = p.ns[i];
+                break;
+            }
+    }
     if (ns > 0) sleep_ns(ns);
     else yield_host();
 }

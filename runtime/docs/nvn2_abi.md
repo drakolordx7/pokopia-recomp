@@ -97,6 +97,8 @@ min = bytes the sdk itself touches or clears (safe for the back end to use); max
 | NVNdlssNetworkBuilder (new) | – | 0xB8 | – | texture IDs at +0x38, 128 bytes |
 | NVNdlssParameters (new) | – | 0xC0 | – | SetDefaults writes to +0xC0 |
 
+The three DLSS objects are fully mapped since goal 18 (field offsets in `src/gfx/nvn/api_dlss.cpp`, from the setters/getters and the packet of `nvnCommandBufferEvaluateDlss` 0x5DEBC0; the network is `memset` 0x220 by Initialize and carries an embedded memory pool at +200). Signature corrections to the Hex-Rays rows: `nvnDlssNetworkBuilderGetStorageSize(builder)` has one argument (the second is a scratch vector register), `nvnDlssNetworkResize(network, int w, int h)` takes the new output size, `nvnDlssNetworkBuilderGetOptimalSettings(builder, 6 x int*)` forwards six pointers to the driver, the texture arguments of the six `SetInputColor`-style calls are `(const NVNtexture*, const NVNtextureView* or null)`.
+
 Acceleration structures are not objects: they are memory the game sizes with `DeviceCalculateAccelerationStructureMemoryRequirements` and passes as addresses.
 
 Note for the back end: texture (0x80→0xC0), queue (0x2000→0x3000), command buffer, window, program and the queue/window builders grew. min is a lower bound from sdk code only; where max is bold the game's layout settles the size.
@@ -182,7 +184,7 @@ All in `work/nvn2/py/` (not committed): `mainload.py` (loader → slot per name)
 | 43 | nvnCommandBufferAddCommandMemory | 0x5C49C0 | v: ppll | v: ppll | same |  | 1 |
 | 44 | nvnCommandBufferAddControlMemory | 0x5C4BB0 | v: ppl | v: ppl | same |  | 1 |
 | 45 | nvnCommandBufferBarrier | 0x61CB70 | v: pi | v: pi | same |  | 13 |
-| 46 | nvnCommandBufferBeginDeviceCommands | 0x5DC220 | v: pp (hexrays) |  | new | nvn2 | unused |
+| 46 | nvnCommandBufferBeginDeviceCommands | 0x5DC220 | v: pp (sdk-verified) |  | new | nvn2 | unused |
 | 47 | nvnCommandBufferBeginRecording | 0x5C4D20 | v: p | v: p | same |  | 1 |
 | 48 | nvnCommandBufferBeginTransformFeedback | 0x608E40 | v: pl | v: pl | same |  | 1 |
 | 49 | nvnCommandBufferBindAccelerationStructure | 0x600CE0 | v: piil (hexrays) |  | new | nvn2 | unused |
@@ -264,7 +266,7 @@ All in `work/nvn2/py/` (not committed): `mainload.py` (loader → slot per name)
 | 125 | nvnCommandBufferDrawTexture | 0x60A6D0 | v: plpp | v: plpp | same |  | unused |
 | 126 | nvnCommandBufferDrawTransformFeedback | 0x609460 | v: pil | v: pil | same |  | 1 |
 | 127 | nvnCommandBufferEnableExclusiveScissor | 0x620EA0 | v: pi (hexrays) |  | new | nvn2 | unused |
-| 128 | nvnCommandBufferEndDeviceCommands | 0x5DC320 | v: pl (hexrays) |  | new | nvn2 | unused |
+| 128 | nvnCommandBufferEndDeviceCommands | 0x5DC320 | v: pp (sdk-verified) |  | new | nvn2 | unused |
 | 129 | nvnCommandBufferEndRecording | 0x5C4DE0 | l: p | l: p | same |  | 1 |
 | 130 | nvnCommandBufferEndTransformFeedback | 0x608EB0 | v: pl | v: pl | same |  | 8 |
 | 131 | nvnCommandBufferEvaluateDlss | 0x5DEBC0 | v: pll (hexrays) |  | new | nvn2 | unused |
@@ -381,7 +383,7 @@ All in `work/nvn2/py/` (not committed): `mainload.py` (loader → slot per name)
 | 242 | nvnCommandBufferSetZCullZF32CompressionEnable | 0x60C6E0 | v: pi (hexrays) |  | new | nvn2 | unused |
 | 243 | nvnCommandBufferShadingRateImagePalette | 0x620D80 | v: piil (hexrays) |  | new | nvn2 | unused |
 | 244 | nvnCommandBufferSignalEvent | 0x5E1320 | v: ppiiii | v: ppiiii | same |  | unused |
-| 245 | nvnCommandBufferSubmitDeviceCommands | 0x5DC680 | v: pp (hexrays) |  | new | nvn2 | unused |
+| 245 | nvnCommandBufferSubmitDeviceCommands | 0x5DC680 | v: pp (sdk-verified) |  | new | nvn2 | unused |
 | 246 | nvnCommandBufferTiledDownsample | 0x61E220 | v: ppp | v: ppp | same |  | unused |
 | 247 | nvnCommandBufferTiledDownsampleTextureView | 0x61E230 | v: ppppp | v: ppppp | same |  | unused |
 | 248 | nvnCommandBufferUpdateUniformBuffer | 0x60A4E0 | v: pllllp | v: pllllp | same |  | unused |
@@ -404,12 +406,12 @@ All in `work/nvn2/py/` (not committed): `mainload.py` (loader → slot per name)
 | 265 | nvnDeviceBuilderSetDefaults | 0x5D64F0 | v: p | v: p | same |  | 1 |
 | 266 | nvnDeviceBuilderSetFlags | 0x5D6500 | v: pi | v: pi | same |  | 1 |
 | 267 | nvnDeviceCalculateAccelerationStructureMemoryRequirements | 0x5F5040 | l: plppp (hexrays) |  | new | nvn2 | unused |
-| 268 | nvnDeviceCommandBufferGetHandle | 0x5DC200 | l: p (hexrays) |  | new | nvn2 | unused |
-| 269 | nvnDeviceCommandBufferSetCommandMemorySize | 0x5DC1E0 | v: pl (hexrays) |  | new | nvn2 | unused |
-| 270 | nvnDeviceCommandBufferSetComputeMemorySize | 0x5DC1F0 | v: pl (hexrays) |  | new | nvn2 | unused |
-| 271 | nvnDeviceCommandBufferSetDefaults | 0x5DC1A0 | v: p (hexrays) |  | new | nvn2 | unused |
-| 272 | nvnDeviceCommandBufferSetDevice | 0x5DC1C0 | v: pl (hexrays) |  | new | nvn2 | unused |
-| 273 | nvnDeviceCommandBufferSetStorage | 0x5DC1D0 | v: plll (hexrays) |  | new | nvn2 | unused |
+| 268 | nvnDeviceCommandBufferGetHandle | 0x5DC200 | l: p (sdk-verified) |  | new | nvn2 | unused |
+| 269 | nvnDeviceCommandBufferSetCommandMemorySize | 0x5DC1E0 | v: pl (sdk-verified) |  | new | nvn2 | unused |
+| 270 | nvnDeviceCommandBufferSetComputeMemorySize | 0x5DC1F0 | v: pl (sdk-verified) |  | new | nvn2 | unused |
+| 271 | nvnDeviceCommandBufferSetDefaults | 0x5DC1A0 | v: p (sdk-verified) |  | new | nvn2 | unused |
+| 272 | nvnDeviceCommandBufferSetDevice | 0x5DC1C0 | v: pp (sdk-verified) |  | new | nvn2 | unused |
+| 273 | nvnDeviceCommandBufferSetStorage | 0x5DC1D0 | v: ppll (sdk-verified) |  | new | nvn2 | unused |
 | 274 | nvnDeviceCompactAccelerationStructure | 0x5F7A50 | l: plll (hexrays) |  | new | nvn2 | unused |
 | 275 | nvnDeviceCopyAccelerationStructure | 0x5F7A30 | v: plll (hexrays) |  | new | nvn2 | unused |
 | 276 | nvnDeviceFinalize | 0x5D6510 | v: p | v: p | same |  | 1 |

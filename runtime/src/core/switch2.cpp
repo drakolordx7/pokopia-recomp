@@ -17,6 +17,8 @@
 #include "nxrt/services_api.h"
 #include "nxrt/video_codec.h"
 
+namespace nxrt::extras { void (*layer_luminance_sink)(bool, unsigned, unsigned) = nullptr; }
+
 namespace nxrt {
 
 namespace {
@@ -112,11 +114,11 @@ void vi_get_native_window(::Ctx* c) {
 // picture for an HDR TV (Pokopia: extended 0..400, standard 0..300 nits, from its graphics-system defaults, every time it makes the layer). The
 // values go to the HDR extras ([hdr] mode = native uses them); nn::Result 0.
 void vi_layer_extended_luminance(::Ctx* c) {
-    extras::hdr_note_layer_luminance(true, static_cast<uint16_t>(c->x[1]), static_cast<uint16_t>(c->x[2]));
+    if (extras::layer_luminance_sink) extras::layer_luminance_sink(true, static_cast<uint16_t>(c->x[1]), static_cast<uint16_t>(c->x[2]));
     c->x[0] = 0;
 }
 void vi_layer_standard_luminance(::Ctx* c) {
-    extras::hdr_note_layer_luminance(false, static_cast<uint16_t>(c->x[1]), static_cast<uint16_t>(c->x[2]));
+    if (extras::layer_luminance_sink) extras::layer_luminance_sink(false, static_cast<uint16_t>(c->x[1]), static_cast<uint16_t>(c->x[2]));
     c->x[0] = 0;
 }
 

@@ -370,7 +370,7 @@ NXTEST(image_type_every_enumerator) {
         {NVN_TEXTURE_TARGET_RECTANGLE, VK_IMAGE_TYPE_2D},
         {NVN_TEXTURE_TARGET_CUBEMAP, VK_IMAGE_TYPE_2D},
         {NVN_TEXTURE_TARGET_CUBEMAP_ARRAY, VK_IMAGE_TYPE_2D},
-        {NVN_TEXTURE_TARGET_BUFFER, VK_IMAGE_TYPE_2D},
+        {NVN_TEXTURE_TARGET_BUFFER, VK_IMAGE_TYPE_1D},   // a buffer texture is shown as a 1D image (nvn_texture_layout.cpp)
     };
     const uint64_t before = unknown_enum_count();
     for (const Row& r : rows) CHECK_EQ(static_cast<int>(vk_image_type(r.nvn)), r.vk);

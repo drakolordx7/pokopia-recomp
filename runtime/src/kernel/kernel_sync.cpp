@@ -74,10 +74,10 @@ void unlock_mutex(uint64_t addr) {
     wake_thread(*next);
 }
 
-// Monotonic nanoseconds from the 19.2 MHz tick (1 tick = 625/12 ns).
+// Monotonic nanoseconds from the system tick (19.2 MHz on Switch 1, 31.25 MHz on Switch 2: tick_hz()). Split so the product cannot overflow.
 int64_t now_ns() {
-    const uint64_t t = system_tick();
-    return static_cast<int64_t>(t / 12 * 625 + t % 12 * 625 / 12);
+    const uint64_t t = system_tick(), hz = tick_hz();
+    return static_cast<int64_t>(t / hz * 1000000000ull + t % hz * 1000000000ull / hz);
 }
 
 }  // namespace

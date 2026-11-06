@@ -133,6 +133,22 @@ class NeonWideOps:
     def i_uaddlp(self, f, i, ops):
         return self.pairwise_long(i, ops, False)
 
+    def dot4(self, i, ops, signed):
+        """SDOT/UDOT: each 32-bit lane += sum of four byte products. By-element form uses byte group [idx] of Rm."""
+        _, n = self.vinfo(ops[0])
+        kind = "s" if signed else "u"
+        d, a, b = self.regop(i, ops[0]), self.regop(i, ops[1]), self.regop(i, ops[2])
+        g = "k" if ops[2].vector_index == -1 else str(ops[2].vector_index)
+        return (f"{{ V128 A = c->v[{a.n}], B = c->v[{b.n}]; V128 r = nx::vzero(); for (int k = 0; k < {n}; k++) {{ "
+                f"int64_t t = 0; for (int j = 0; j < 4; j++) t += int64_t(A.{kind}8[4 * k + j]) * int64_t(B.{kind}8[4 * ({g}) + j]); "
+                f"r.u32[k] = uint32_t(c->v[{d.n}].u32[k] + uint32_t(t)); }} c->v[{d.n}] = r; }}")
+
+    def i_sdot(self, f, i, ops):
+        return self.dot4(i, ops, True)
+
+    def i_udot(self, f, i, ops):
+        return self.dot4(i, ops, False)
+
     def narrow(self, i, ops, expr, src_kind="u", dst_kind="u"):
         """Destination lanes are half the source lanes; `2` variants write the upper half and keep the lower."""
         dbits, n = self.vinfo(ops[0])

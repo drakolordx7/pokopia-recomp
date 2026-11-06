@@ -96,6 +96,9 @@ bool resolve_stage_modules(const GraphicsKey& key, StageModules* out);
 std::vector<SpvIntSlot> key_int_slots(const GraphicsKey& key);
 // The dynamic state list every graphics pipeline and pipeline library uses.
 const VkPipelineDynamicStateCreateInfo* pipeline_dynamic_state();
+// Whether the pipelines list the NVN2 smaller features' dynamic states: the device has the extension and [nvn] small_dynamic is not false.
+bool small_dynamic_conservative();
+bool small_dynamic_fsr();
 VkPipelineCache pipeline_cache_handle();
 void note_pipeline_created(double ms, const char* what);   // counters and the dirty flag of the cache file
 

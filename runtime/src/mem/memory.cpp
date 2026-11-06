@@ -77,7 +77,7 @@ uint64_t g_heap_size = 0;                 // 0 = no heap; otherwise the section 
 std::vector<uint64_t> g_commit_bits;      // one bit per 4 KiB page of the section, set by heap_commit
 uint64_t g_committed = 0;                 // bytes of pages whose bit is set
 // Per 4 KiB page of the section, what the host reports for it: 0 never committed, 1 committed but no-access (a decommitted page or one
-// the guest made inaccessible), 2 committed and accessible. VirtualQuery over the section view walks every page table entry of the
+// the guest made inaccessible), 2 committed read-write, 3 committed and accessible with another protection (read-only, executable). VirtualQuery over the section view walks every page table entry of the
 // run of identical pages (about 75 ms for a 3 GiB committed heap), so is_mapped and protect answer heap ranges from this table.
 std::vector<uint8_t> g_heap_cls;
 struct Alias {
@@ -307,6 +307,7 @@ bool commit(uint64_t addr, uint64_t size, Prot p) {
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
     const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);   // the write tracker keeps out of the range while it changes
+    ww::protection_changed(reinterpret_cast<void*>(start), end - start);
     if (!VirtualAlloc(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), MEM_COMMIT, protect_of(p))) {
         DWORD e = GetLastError();
         NXLOG_E(kTag, "commit %llx (+%llx): VirtualAlloc failed, error %lu", static_cast<unsigned long long>(start),
@@ -321,6 +322,7 @@ bool decommit(uint64_t addr, uint64_t size) {
     if (!page_span(addr, size, &start, &end)) return false;
     if (start == end) return true;
     const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);
+    ww::protection_changed(reinterpret_cast<void*>(start), end - start);
     if (!VirtualFree(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), MEM_DECOMMIT)) {
         DWORD e = GetLastError();
         NXLOG_E(kTag, "decommit %llx (+%llx): VirtualFree failed, error %lu", static_cast<unsigned long long>(start),
@@ -336,6 +338,7 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
     if (start == end) return true;
     const DWORD np = protect_of(p);
     const ww::OsWriteScope wws(reinterpret_cast<void*>(start), end - start);   // pages the write tracker armed get this protection, not its own
+    ww::protection_changed(reinterpret_cast<void*>(start), end - start);
     {   // heap: the page table says whether every page is committed, so one VirtualProtect does it (no VirtualQuery over the view)
         std::lock_guard hk(g_heap_mu);
         if (in_heap_view(start, end)) {
@@ -344,7 +347,8 @@ bool protect(uint64_t addr, uint64_t size, Prot p) {
             for (uint64_t q = p0; q < p1 && all; ++q) all = g_heap_cls[q] != 0;
             DWORD old = 0;
             if (all && VirtualProtect(reinterpret_cast<void*>(start), static_cast<SIZE_T>(end - start), np, &old)) {
-                std::fill(g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p0), g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p1), np == PAGE_NOACCESS ? uint8_t{1} : uint8_t{2});
+                std::fill(g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p0), g_heap_cls.begin() + static_cast<std::ptrdiff_t>(p1),
+                          np == PAGE_NOACCESS ? uint8_t{1} : np == PAGE_READWRITE ? uint8_t{2} : uint8_t{3});
                 return true;
             }
         }
@@ -404,6 +408,16 @@ uint64_t alloc_kernel(uint64_t size, uint64_t align) {
     return a;
 }
 
+int heap_rw_state(uint64_t addr, uint64_t size) {
+    uint64_t start = 0, end = 0;
+    if (!page_span(addr, size, &start, &end)) return -1;
+    std::lock_guard hk(g_heap_mu);
+    if (!in_heap_view(start, end)) return -1;
+    for (uint64_t q = (start - kHeapBase) / kPage, q1 = (end - kHeapBase) / kPage; q < q1; ++q)
+        if (g_heap_cls[q] != 2) return 0;
+    return 1;
+}
+
 bool is_mapped(uint64_t addr, uint64_t size) {
     uint64_t start = 0, end = 0;
     if (!page_span(addr, size, &start, &end)) return false;
@@ -412,7 +426,7 @@ bool is_mapped(uint64_t addr, uint64_t size) {
         if (in_heap_view(start, end)) {
             const uint64_t p0 = (start - kHeapBase) / kPage, p1 = (end - kHeapBase) / kPage;
             for (uint64_t q = p0; q < p1; ++q)
-                if (g_heap_cls[q] != 2) return false;
+                if (g_heap_cls[q] < 2) return false;
             return true;
         }
     }
@@ -504,6 +518,7 @@ bool heap_commit(uint64_t offset, uint64_t size) {
     const uint64_t start = offset & ~(kPage - 1);
     const uint64_t end = align_up(offset + size, kPage);
     const ww::OsWriteScope wws(reinterpret_cast<void*>(kHeapBase + start), end - start);   // MEM_COMMIT makes committed pages read-write again
+    ww::protection_changed(reinterpret_cast<void*>(kHeapBase + start), end - start);
     if (!VirtualAlloc(reinterpret_cast<void*>(kHeapBase + start), static_cast<SIZE_T>(end - start), MEM_COMMIT,
                       PAGE_READWRITE)) {
         DWORD e = GetLastError();
@@ -537,6 +552,7 @@ bool heap_decommit(uint64_t offset, uint64_t size) {
     const uint64_t start = offset & ~(kPage - 1);
     const uint64_t end = align_up(offset + size, kPage);
     const ww::OsWriteScope wws(reinterpret_cast<void*>(kHeapBase + start), end - start);
+    ww::protection_changed(reinterpret_cast<void*>(kHeapBase + start), end - start);
     for (uint64_t p = start / kPage; p < end / kPage;) {
         if (!bit_test(p)) {
             p++;

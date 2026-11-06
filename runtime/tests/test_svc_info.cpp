@@ -12,6 +12,7 @@
 #include "nxrt/kernel.h"
 #include "nxrt/memory.h"
 #include "nxrt/svc.h"
+#include "test_platform.h"
 NXTEST_GROUP(svc_info)
 
 namespace {
@@ -126,6 +127,26 @@ NXTEST(info_random_entropy_bad_subtype) {
     CHECK_EQ(r.x1, 0u);
 }
 
+// Switch 2 profile: six application cores (mask 0x3f) and eight RandomEntropy subtypes / core numbers (Switch 1: three cores, four subtypes).
+NXTEST(info_switch2_core_mask_entropy_subtypes_and_core_numbers) {
+    nxtest::ScopedPlatform sw2(nxrt::game::Platform::Switch2);
+    Result r = call(kSvcGetInfo, 0);
+    CHECK_EQ(r.rc, 0u);
+    CHECK_EQ(r.x1, 0x3Full);
+    uint64_t v[8] = {};
+    for (uint64_t s = 0; s < 8; s++) {
+        r = call(kSvcGetInfo, 11, 0, s);
+        CHECK_EQ(r.rc, 0u);
+        v[s] = r.x1;
+    }
+    for (int i = 0; i < 8; i++)
+        for (int j = i + 1; j < 8; j++) CHECK_MSG(v[i] != v[j], "RandomEntropy subtypes must differ");
+    r = call(kSvcGetInfo, 11, 0, 8);
+    CHECK_EQ(r.rc, kInvalidCombination);
+    CHECK_EQ(call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, 5).rc, 0u);
+    CHECK_EQ(call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, 8).rc, kInvalidCombination);
+}
+
 NXTEST(info_aslr_and_stack_regions) {
     Result r = call(kSvcGetInfo, 12);
     CHECK_EQ(r.rc, 0u);
@@ -206,6 +227,11 @@ NXTEST(info_thread_tick_count_pseudo_handle_counts_cpu) {
         Result a = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
         burn_cpu(20);
         Result b = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        // Windows adds a thread's CPU time at its clock tick (15.6 ms): on a busy machine 20 ms of burning can still read 0, so burn on (2 s at most).
+        for (int i = 0; i < 100 && b.rc == 0 && b.x1 == 0; ++i) {
+            burn_cpu(20);
+            b = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
+        }
         Result c = call(kSvcGetInfo, kInfoThreadTickCount, kPseudoThread, kAllCores);
         rc_ok = (a.rc == 0 && b.rc == 0 && c.rc == 0) ? 0u : 1u;
         first = a.x1;

@@ -4,6 +4,7 @@
 // transfer and physical memory views in the alias region. The address space and the Horizon vm map are in include/nxrt/memory.h.
 #include <windows.h>
 
+#include <algorithm>
 #include <bit>
 
 #include <cstddef>
@@ -50,6 +51,46 @@ std::vector<MapRec> g_maps;
 // RELRO after making it read-only; the kernel then refuses SetMemoryPermission there and QueryMemory reports the attribute.
 std::map<uint64_t, uint64_t> g_perm_locked;
 constexpr uint32_t kAttrUncached = 0x08, kAttrPermissionLocked = 0x10;   // svc::MemoryAttribute bits
+constexpr uint32_t kAttrGpuAccessible = 0x20;   // Switch 2 (svc 0x80 SetGpuMemoryAttribute): memory registered with the GPU
+// Ranges with the GpuAccessible attribute: start -> end, disjoint and not adjacent. Set and cleared by SetGpuMemoryAttribute, reported by
+// QueryMemory (NVN2 reads it back). Guarded by g_mu.
+std::map<uint64_t, uint64_t> g_gpu_attr;
+void gpu_attr_set(uint64_t a, uint64_t e) {   // call with g_mu held
+    auto it = g_gpu_attr.lower_bound(a);
+    if (it != g_gpu_attr.begin() && std::prev(it)->second >= a) --it;   // touches or overlaps the previous range
+    while (it != g_gpu_attr.end() && it->first <= e) {
+        if (it->first < a) a = it->first;
+        if (it->second > e) e = it->second;
+        it = g_gpu_attr.erase(it);
+    }
+    g_gpu_attr.emplace(a, e);
+}
+void gpu_attr_clear(uint64_t a, uint64_t e) {   // call with g_mu held
+    auto it = g_gpu_attr.lower_bound(a);
+    if (it != g_gpu_attr.begin() && std::prev(it)->second > a) --it;
+    while (it != g_gpu_attr.end() && it->first < e) {
+        const uint64_t s0 = it->first, e0 = it->second;
+        it = g_gpu_attr.erase(it);
+        if (s0 < a) g_gpu_attr.emplace(s0, a);
+        if (e0 > e) g_gpu_attr.emplace(e, e0);
+        it = g_gpu_attr.lower_bound(e0);   // ranges are disjoint: the next one that may overlap starts at or after this one's end
+    }
+}
+// The block around `addr` inside [lo, hi) that has one GpuAccessible value (the kernel splits blocks where attributes change).
+bool gpu_attr_block(uint64_t addr, uint64_t& lo, uint64_t& hi) {   // call with g_mu held; true = the block has the attribute
+    auto it = g_gpu_attr.upper_bound(addr);   // first range starting after addr
+    if (it != g_gpu_attr.begin()) {
+        auto p = std::prev(it);
+        if (p->second > addr) {
+            lo = std::max(lo, p->first);
+            hi = std::min(hi, p->second);
+            return true;
+        }
+        lo = std::max(lo, p->second);
+    }
+    if (it != g_gpu_attr.end()) hi = std::min(hi, it->first);
+    return false;
+}
 bool overlaps_perm_locked(uint64_t addr, uint64_t size) {   // call with g_mu held
     auto it = g_perm_locked.upper_bound(addr);
     if (it != g_perm_locked.begin()) {
@@ -288,10 +329,40 @@ void set_memory_attribute(::Ctx* c) {
 }
 
 // ---- SetGpuMemoryAttribute (0x80, Switch 2) ----------------------------------------------------------------------------------
-// Switch 2 kernels add GPU memory attribute calls (0x80-0x82). Guest memory is plain host memory here and the GPU is the host's
-// Vulkan device, so there is no attribute to change: log the arguments (the layout is not documented yet) and succeed.
+// svcSetGpuMemoryAttribute(address, size, mask, attr) (switchbrew [S2] 0x80). The only attribute is GpuAccessible (0x20): nn::gpu::sdk and the
+// native memory objects of nn::gs set it before they register memory with the GPU and clear it when they destroy it, and NVN2 sees it
+// through QueryMemory. Guest memory is plain host memory and the GPU is the host's Vulkan device, so nothing changes in the memory itself;
+// the attribute is tracked and reported. Checks as svcSetMemoryAttribute's, limited to that bit (Eglantine NX2_NOTES row 47, svc.cpp).
+// Switch 1 titles never call it (it is not in their SVC mask): they keep the old log-and-succeed answer.
 void set_gpu_memory_attribute(::Ctx* c) {
-    NXLOG_D(kTag, "SetGpuMemoryAttribute(%llx, %llx, %llx, %llx)", U(reg(c, 0)), U(reg(c, 1)), U(reg(c, 2)), U(reg(c, 3)));
+    const uint64_t addr = reg(c, 0), size = reg(c, 1);
+    const uint32_t mask = static_cast<uint32_t>(reg(c, 2)), attr = static_cast<uint32_t>(reg(c, 3));
+    NXLOG_D(kTag, "SetGpuMemoryAttribute(%llx, %llx, mask %x, attr %x)", U(addr), U(size), mask, attr);
+    if (game::info().platform != game::Platform::Switch2) {
+        svc_ret(c, kernel::kOk);
+        return;
+    }
+    if (addr & kPageMask) {
+        fail(c, "SetGpuMemoryAttribute", kernel::kInvalidAddress, addr, size, mask);
+        return;
+    }
+    if (size == 0 || (size & kPageMask)) {
+        fail(c, "SetGpuMemoryAttribute", kernel::kInvalidSize, addr, size, mask);
+        return;
+    }
+    if ((attr & ~mask) != 0 || ((mask | attr) & ~kAttrGpuAccessible) != 0) {
+        fail(c, "SetGpuMemoryAttribute", kernel::kInvalidCombination, addr, mask, attr);
+        return;
+    }
+    if (addr + size <= addr || !mem::is_mapped(addr, size)) {
+        fail(c, "SetGpuMemoryAttribute", kernel::kInvalidMemoryState, addr, size, mask);
+        return;
+    }
+    if (mask & kAttrGpuAccessible) {
+        std::lock_guard lk(g_mu);
+        if (attr & kAttrGpuAccessible) gpu_attr_set(addr, addr + size);
+        else gpu_attr_clear(addr, addr + size);
+    }
     svc_ret(c, kernel::kOk);
 }
 
@@ -420,6 +491,12 @@ void query_memory(::Ctx* c) {
     {
         std::lock_guard lk(g_mu);
         if (vi.state != mem::kMemFree && overlaps_perm_locked(vi.addr, vi.size)) info.attribute |= kAttrPermissionLocked;
+        if (vi.state != mem::kMemFree && !g_gpu_attr.empty()) {   // the block ends where the GpuAccessible attribute changes
+            uint64_t lo = vi.addr, hi = vi.addr + vi.size;
+            if (gpu_attr_block(addr, lo, hi)) info.attribute |= kAttrGpuAccessible;
+            info.base_address = lo;
+            info.size = hi - lo;
+        }
     }
     std::memcpy(reinterpret_cast<void*>(out), &info, sizeof info);
     reg(c, 1) = 0;
@@ -792,6 +869,7 @@ void svc_memory_reset_for_tests() {
     g_phys.clear();
     g_maps.clear();
     g_perm_locked.clear();
+    g_gpu_attr.clear();
     g_heap_cur = 0;
 }
 

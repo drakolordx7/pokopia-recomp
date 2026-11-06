@@ -1,0 +1,13 @@
+[package]
+name = "oozx"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+oozextract = "=0.5.7"
+
+[profile.release]
+opt-level = 3

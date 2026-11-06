@@ -133,18 +133,20 @@ NXTEST(mouse_is_wanted_only_over_the_menu) {
     REQUIRE(rig.make(false));
     Overlay& o = *rig.overlay;
     o.set_visible(true);
-    for (int i = 0; i < 3; ++i) rig.frame();    // ImGui learns where its window is (16,16, 420 wide)
-    o.handle_event(motion(100, 60));
+    // The rig adds no panel, so the only window is Diagnostics: folded up at the top right on first use (overlay.cpp build_ui: x = 800 - 420 -
+    // 16, y = 16 at UI scale 1, which an 800x450 frame has), its title bar about 22 px high. The settings panels sit at the top left.
+    for (int i = 0; i < 3; ++i) rig.frame();    // ImGui learns where its window is
+    o.handle_event(motion(550, 26));
     rig.frame();
     std::printf("    pointer over the menu: wants_mouse %d\n", o.wants_mouse());
     CHECK(o.wants_mouse());
     input::Event click;
     click.type = input::EventType::MouseButtonDown;
-    click.u.button = {1, 1, 100.f, 60.f};
+    click.u.button = {1, 1, 550.f, 26.f};
     CHECK(o.handle_event(click));               // a click on the menu is the menu's
     click.type = input::EventType::MouseButtonUp;
     CHECK(o.handle_event(click));
-    o.handle_event(motion(780, 430));           // bottom right corner: nothing there
+    o.handle_event(motion(100, 60));            // where the pre-settings-menu window sat: nothing there now
     for (int i = 0; i < 4; ++i) rig.frame();    // ImGui trickles queued mouse events in, one change per frame
     std::printf("    pointer outside the menu: wants_mouse %d\n", o.wants_mouse());
     CHECK(!o.wants_mouse());

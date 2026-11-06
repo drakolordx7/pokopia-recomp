@@ -279,3 +279,47 @@ NXTEST(pl_unknown_command_answers_stub) {
     nxsvc::Reply r = s.call(99);
     CHECK_EQ(r.result, nxrt::kernel::kStubService);
 }
+
+// Switch 2 pl:u 2000 / 2010 (Eglantine NX2_NOTES row 36): the built-in fonts as plain TTF. 2010 takes the font type in the first byte and
+// answers 24 bytes: u32 found at 0, descriptor at 8 {u32 flags, u32 offset, u32 size, u32}. The offset must hold the same bytes
+// GetSharedMemoryAddressOffset points at (the shared memory is plain TTF behind its 8-byte header).
+NXTEST(pl_switch2_built_in_font_data) {
+    std::vector<uint8_t> ttf;
+    if (!read_all(std::filesystem::path(kFonts) / "DejaVuSans.ttf", ttf)) {
+        nxtest::skip("assets/fonts/DejaVuSans.ttf not found");
+        return;
+    }
+    nxsvc::Env env;
+    use_fonts(kFonts);
+    nxsvc::Session s = nxsvc::connect("pl:u");
+    REQUIRE(s.valid());
+    nxsvc::Reply mem = s.call(2000);   // GetBuiltInFontSharedMemory: u32 size + copy handle
+    CHECK_EQ(mem.result, 0u);
+    CHECK_EQ(mem.copy.size(), size_t(1));
+    CHECK(mem.get<uint32_t>(0) >= expected_offset(kTypes - 1, ttf.size()) + ttf.size());
+    for (uint32_t t = 0; t < kTypes; ++t) {
+        nxsvc::Reply r = s.call(2010, nxsvc::Args().u32(t));
+        CHECK_EQ(r.result, 0u);
+        CHECK_EQ(r.get<uint32_t>(0), 1u);
+        CHECK_EQ(r.get<uint32_t>(12), expected_offset(t, ttf.size()));
+        CHECK_EQ(r.get<uint32_t>(16), uint32_t(ttf.size()));
+    }
+    nxsvc::Reply none = s.call(2010, nxsvc::Args().u32(77));   // not a font type
+    CHECK_EQ(none.result, 0u);
+    CHECK_EQ(none.get<uint32_t>(0), 0u);
+    CHECK_EQ(none.get<uint32_t>(16), 0u);
+}
+
+// chat:u (Switch 2 GameChat): cmd 0 opens a session, whose cmd 1 returns an event handle.
+NXTEST(chat_u_opens_a_session_with_an_event) {
+    nxsvc::Env env;
+    nxsvc::Session s = nxsvc::connect("chat:u");
+    REQUIRE(s.valid());
+    nxsvc::Reply r = s.call(0);
+    REQUIRE(r.ok());
+    nxsvc::Session chat = s.sub(r);
+    REQUIRE(chat.valid());
+    nxsvc::Reply ev = chat.call(1, nxsvc::Args().u32(2));
+    CHECK_EQ(ev.result, 0u);
+    CHECK_EQ(ev.copy.size(), size_t(1));
+}

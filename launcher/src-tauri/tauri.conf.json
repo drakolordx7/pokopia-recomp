@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "PokopiaLauncher",
+  "productName": "RecompLauncher",
   "version": "0.1.1",
-  "identifier": "org.pkp-recomp.launcher",
+  "identifier": "org.switch2-recomp.launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Pokopia Launcher",
+        "title": "Launcher",
         "width": 1040,
         "height": 680,
         "minWidth": 860,

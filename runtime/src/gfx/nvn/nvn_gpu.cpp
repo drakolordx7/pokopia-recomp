@@ -47,6 +47,8 @@ nxrt::GaugeCounter g_gauge_barriers_img("nvn.cnt.barriers_img");   // image layo
 struct Slot {
     VkCommandPool pool = VK_NULL_HANDLE;
     VkCommandBuffer cb = VK_NULL_HANDLE;
+    std::vector<VkCommandBuffer> split_cbs;   // command buffers frame_split continues in (from the slot's pool; reused after each pool reset)
+    size_t split_used = 0;
     std::vector<VkDescriptorPool> dpools;
     size_t dpool_cur = 0;
     gfx::Buffer upload;
@@ -256,6 +258,7 @@ Slot& acquire_slot() {
     s.gp_labels.clear();
     retire();
     vkResetCommandPool(g->dev->device(), s.pool, 0);
+    s.split_used = 0;
     for (VkDescriptorPool p : s.dpools) vkResetDescriptorPool(g->dev->device(), p, 0);
     vk_gauge_descriptor_sets().sub(static_cast<int64_t>(s.sets_live));   // the reset freed them
     s.sets_live = 0;
@@ -581,6 +584,52 @@ uint64_t submit_on_render_thread(const std::function<void(Frame&)>& record, uint
 }
 
 }  // namespace
+
+// Ends the command buffer of the submission being recorded, runs what is recorded so far and waits for the GPU to finish it (and every earlier
+// submission), then goes on recording the same submission (same serial) in a fresh command buffer of the slot. Render thread only. The caller has
+// ended its render pass and queries, and must treat everything bound in the old command buffer as unbound.
+bool frame_split(Frame& f) {
+    if (!g || !on_render_thread() || !f.slot || f.cb == VK_NULL_HANDLE) return false;
+    Slot& s = *static_cast<Slot*>(f.slot);
+    VkDevice dev = g->dev->device();
+    if (s.split_used == s.split_cbs.size()) {
+        VkCommandBufferAllocateInfo ai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        ai.commandPool = s.pool;
+        ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        ai.commandBufferCount = 1;
+        VkCommandBuffer nb = VK_NULL_HANDLE;
+        if (vkAllocateCommandBuffers(dev, &ai, &nb) != VK_SUCCESS) return false;
+        s.split_cbs.push_back(nb);
+    }
+    VkCommandBuffer next = s.split_cbs[s.split_used++];
+    VkFenceCreateInfo fi = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    VkFence fence = VK_NULL_HANDLE;
+    if (vkCreateFence(dev, &fi, nullptr, &fence) != VK_SUCCESS) return false;
+    vkEndCommandBuffer(f.cb);
+    VkCommandBufferSubmitInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO};
+    cbi.commandBuffer = f.cb;
+    VkSubmitInfo2 si = {VK_STRUCTURE_TYPE_SUBMIT_INFO_2};
+    si.commandBufferInfoCount = 1;
+    si.pCommandBufferInfos = &cbi;   // no timeline signal: the serial belongs to the end of the submission
+    VkResult r;
+    {
+        std::lock_guard<std::mutex> lk(g->dev->queue_mutex());
+        r = vkQueueSubmit2(g->dev->queue(), 1, &si, fence);
+    }
+    if (r == VK_SUCCESS) {
+        if (vkWaitForFences(dev, 1, &fence, VK_TRUE, 10ull * 1000 * 1000 * 1000) != VK_SUCCESS) NXLOG_W(kTag, "frame split: the GPU did not finish within 10 s");
+        wait_serial_blocking(g->submitted);   // earlier submissions too: the data the caller reads may come from any of them
+    } else {
+        NXLOG_E(kTag, "frame split: vkQueueSubmit2 failed (%d)", static_cast<int>(r));
+    }
+    vkDestroyFence(dev, fence, nullptr);
+    VkCommandBufferBeginInfo bi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(next, &bi);
+    f.cb = next;
+    g->ctr.submits.fetch_add(1);
+    return r == VK_SUCCESS;
+}
 
 // Queues a submission with the next serial (in queue order). wait: until the render thread has run it (and, with gpu_done, the GPU too).
 uint64_t queue_submit(std::function<void(Frame&)> record, bool wait, bool gpu_done) {

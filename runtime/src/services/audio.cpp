@@ -360,7 +360,8 @@ std::shared_ptr<Service> make_audren() {
 // asks it for the renderer manager with cmd 2 instead of opening audren:u; the answer is the same IAudioRendererManager object.
 std::shared_ptr<Service> make_aud_user() {
     auto s = std::make_shared<Service>("aud:u");
-    // cmds 0/1: inferred from OpenAudioOut asking for cmd 1 (in, out, renderer in that order).
+    // Commands from the SDK (sdk 20.5.25, IDA): the proxy's vtable slots +32/+40/+48/+56 send cmds 0-3. ListAudioIns / OpenAudioIn use cmd 0,
+    // ListAudioOuts / OpenAudioOut cmd 1, CreateAudioRendererManager(false) cmd 2, SetSpatialDownmixOutputMode cmd 3 (then that object's cmd 0).
     s->add_cmd(0, "CreateAudioInManager", [](Request&, Response& rsp) -> uint32_t {
         rsp.push_object(audio_in_manager());
         return 0;
@@ -371,6 +372,12 @@ std::shared_ptr<Service> make_aud_user() {
     });
     s->add_cmd(2, "CreateAudioRendererManager", [](Request&, Response& rsp) -> uint32_t {
         rsp.push_object(make_audren());
+        return 0;
+    });
+    s->add_cmd(3, "CreateAudioOutputControl", [](Request&, Response& rsp) -> uint32_t {   // name ours; the object sets output modes
+        auto ctl = std::make_shared<Service>("aud:u output control");
+        ctl->add_cmd(0, "SetSpatialDownmixOutputMode", [](Request&, Response&) -> uint32_t { return 0; });   // the PC mixes its own output
+        rsp.push_object(ctl);
         return 0;
     });
     return s;

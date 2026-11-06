@@ -5,13 +5,15 @@
 // parses and links. The NSO's own addresses are module relative, as in the ELF, so the lifted code's baked bases and DynSym values
 // agree with the mapping.
 // Format: Switchbrew "NSO" page (header at 0x0, segments at 0x10/0x20/0x30, bss size 0x3C, compressed sizes 0x60). LZ4 block format:
-// lz4_Block_format.md of github.com/lz4/lz4 (reimplemented here).
+// lz4_Block_format.md of github.com/lz4/lz4 (reimplemented here). Flag bit 7 (UseZbicCompression, firmware 22.0.0+): the compressed
+// segments are ZBIC frames instead of LZ4 blocks (zbic.cpp, docs/zbic.md).
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 
 #include "elf.h"
+#include "zbic.h"
 #include "nxrt/log.h"
 #include "nxrt/module.h"
 
@@ -105,7 +107,12 @@ Module* module_load_nso_memory(const void* data, size_t size, const LoadOptions&
     uint8_t* img = elf.data() + kHeaderPad;
     for (int i = 0; i < 3; i++) {
         const bool lz4 = (flags >> i) & 1;
-        if (lz4) {
+        if (lz4 && (flags & kNsoFlagZbic)) {
+            if (!zbic_decompress(img + seg[i].mem_off, seg[i].dsize, d + seg[i].file_off, seg[i].csize)) {
+                fail(err, "NSO segment %d: ZBIC stream is corrupt (compressed 0x%x, expected 0x%x bytes)", i, seg[i].csize, seg[i].dsize);
+                return nullptr;
+            }
+        } else if (lz4) {
             if (!lz4_block_decode(d + seg[i].file_off, seg[i].csize, img + seg[i].mem_off, seg[i].dsize)) {
                 fail(err, "NSO segment %d: LZ4 stream is corrupt (compressed 0x%x, expected 0x%x bytes)", i, seg[i].csize, seg[i].dsize);
                 return nullptr;

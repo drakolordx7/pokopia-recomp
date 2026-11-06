@@ -64,7 +64,7 @@ if(NXRT_BUILD_TESTS)
     endif()
     add_executable(nxrt_tests ${NXRT_TEST_SOURCES})
     target_include_directories(nxrt_tests PRIVATE tests)
-    target_link_libraries(nxrt_tests PRIVATE nxrt)
+    target_link_libraries(nxrt_tests PRIVATE nxrt nxrt_gfx)   # core references gfx (switch2.cpp HDR, testtools screenshots)
     target_compile_definitions(nxrt_tests PRIVATE NXRT_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data")
     # A linker map next to the exe: the crash handler and the watchdog name host code from it. Keep host allocations low
     # (HIGHENTROPYVA:NO) so the guest ranges at 0x71_0000_0000 and up are free; a 64 MiB main stack.

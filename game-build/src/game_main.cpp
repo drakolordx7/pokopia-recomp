@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// pkp.exe: Pokémon Pokopia (Switch 2, 0400A3A01EE4C000, 2.0.1) as a native Windows process.
+// The game exe: the game (title and facts: game manifest, recomp/games/<id>/game.toml) as a native Windows process.
 //
 // This is the part of the process that Horizon's kernel and loader do before the first guest instruction:
-//   1. map the four NSOs of the ExeFS (rtld, main, sdk, subsdk0) at the bases the lifter baked into the generated code,
+//   1. map the NSOs of the ExeFS (the manifest's modules, entry module first) at the bases the lifter baked into the generated code,
 //   2. hand the lifted module tables to the runtime (each library carries the ABI version it was built with),
 //   3. relocate / link the modules,
 //   4. turn the host main thread into the guest main thread (stack, TLS in TPIDRRO_EL0, main thread handle),
-//   5. enter the first module (rtld) at offset 0 with the registers the kernel gives a new process: x0 = 0, x1 = main thread handle.
+//   5. enter the first module (the entry module, rtld) at offset 0 with the registers the kernel gives a new process: x0 = 0, x1 = main thread handle.
 // Everything after that (nn::init::Start, nninitStartup, nnMain) is the lifted game running on the runtime.
 //
-//   pkp [--game DIR] [--exefs DIR] [--ini FILE] [--log FILE] [--max-seconds N] [--link host|none] [--no-nvn] [--headless|--window]
-// Environment: PKP_EXEFS, PKP_GAME. Keys (section [boot]) are read through the runtime's config, see docs/S6.md.
+//   <game> [--game DIR] [--exefs DIR] [--ini FILE] [--log FILE] [--max-seconds N] [--link host|none] [--no-nvn] [--headless|--window]
+// Environment: <ID>_EXEFS, <ID>_GAME (the manifest id uppercased: GAME_ENV below). Keys (section [boot]) are read through the runtime's config, see docs/S6.md.
 //
-// Installed layout (a release folder after pkp_setup has run): when exefs\main sits next to pkp.exe, or --game DIR / PKP_GAME names a
+// Installed layout (a release folder after the launcher's setup has run): when exefs\main sits next to the exe, or --game DIR / <ID>_GAME names a
 // folder, that folder becomes the working directory, so everything the runtime reads relative to it (bc7_cache, shader_cache, romfs,
-// controls.ini, pkp.log) is found wherever the exe is started from (double click, shortcut, terminal), and the settings file is ./pkp.ini
-// (written by the launcher's setup). A pkp.ini next to pkp.exe also makes the folder installed. Paths come from pkp.ini, relative ones
+// controls.ini, the log) is found wherever the exe is started from (double click, shortcut, terminal), and the settings file is the
+// manifest's ini (written by the launcher's setup). That ini next to the exe also makes the folder installed. Paths come from it, relative ones
 // resolved against the game folder: [fs] exefs (default ./exefs), [fs] romfs (default ./romfs), [nvn] shader_cache (default
-// ./shader_cache/spirv). --exefs / PKP_EXEFS and the NXRT_* variables win over the ini. Without it (development runs from game-build or
+// ./shader_cache/spirv). --exefs / <ID>_EXEFS and the NXRT_* variables win over the ini. Without it (development runs from game-build or
 // work/run) nothing changes, except that [fs] exefs in the ini named by --ini / NXRT_INI replaces the built-in ExeFS default.
 #include <windows.h>
 
@@ -48,25 +48,27 @@
 #include "nxrt/nxmodule.h"
 #include "nxrt/runtime.h"
 
-#include "pkp/pkp_game.h"   // the Pokémon Pokopia game module (runtime/games/pkp): every title-specific table the runtime uses
+#include "game_manifest.h"   // generated from the game manifest: GAME_* names, files and the module list
+#include GAME_HEADER      // the game module (runtime/games/<id>): every title-specific table the runtime uses
 
-#ifdef PKP_RT_DLL
-// Release model (b): this file is built into pkp_rt.dll (the runtime, no game code). pkp.exe is linked on the player's PC from the
-// libraries lifted out of their own dump plus src/pkp_stub.cpp, which passes the four module tables to pkp_rt_main below.
-#include "pkp_rt_api.h"
+#ifdef GAME_AS_DLL
+// Release model (b): this file is built into the runtime DLL (no game code). The game exe is linked on the player's PC from the
+// libraries lifted out of their own dump plus src/stub.cpp, which passes the module tables to game_rt_main below.
+#include "rt_api.h"
 #else
 extern "C" {
-extern const NxModule nxmod_main, nxmod_sdk, nxmod_subsdk0, nxmod_rtld;
-extern const uint32_t nxmod_main_abi, nxmod_sdk_abi, nxmod_subsdk0_abi, nxmod_rtld_abi;
+#define X(name, file, base) extern const NxModule nxmod_##name; extern const uint32_t nxmod_##name##_abi;
+GAME_MODULES(X)
+#undef X
 }
 #endif
 
-#ifndef PKP_EXEFS_DEFAULT
-#define PKP_EXEFS_DEFAULT "game/exefs"
+#ifndef GAME_EXEFS_DEFAULT
+#define GAME_EXEFS_DEFAULT "game/exefs"
 #endif
 
-#ifndef PKP_VERSION
-#define PKP_VERSION "dev"     // set by the build: game-build/CMakeLists.txt, -DPKP_VERSION=0.1.0
+#ifndef GAME_RELEASE_VERSION
+#define GAME_RELEASE_VERSION "dev"     // set by the build: game-build/CMakeLists.txt, -DGAME_VERSION=0.1.0
 #endif
 
 namespace {
@@ -79,19 +81,17 @@ struct GameModule {
 };
 
 // Load order = the order the console maps them: the entry module first.
-#ifdef PKP_RT_DLL
-GameModule kModules[] = {      // filled by pkp_rt_main from the tables pkp.exe passes
-    {"rtld", nullptr, nullptr, 0x7700000000ull},
-    {"main", nullptr, nullptr, 0x7100000000ull},
-    {"sdk", nullptr, nullptr, 0x7500000000ull},
-    {"subsdk0", nullptr, nullptr, 0x7600000000ull},
+#ifdef GAME_AS_DLL
+GameModule kModules[] = {      // filled by game_rt_main from the tables the game exe passes
+#define X(name, file, base) {file, nullptr, nullptr, base},
+    GAME_MODULES(X)
+#undef X
 };
 #else
 const GameModule kModules[] = {
-    {"rtld", &nxmod_rtld, &nxmod_rtld_abi, 0x7700000000ull},
-    {"main", &nxmod_main, &nxmod_main_abi, 0x7100000000ull},
-    {"sdk", &nxmod_sdk, &nxmod_sdk_abi, 0x7500000000ull},
-    {"subsdk0", &nxmod_subsdk0, &nxmod_subsdk0_abi, 0x7600000000ull},
+#define X(name, file, base) {file, &nxmod_##name, &nxmod_##name##_abi, base},
+    GAME_MODULES(X)
+#undef X
 };
 #endif
 
@@ -101,10 +101,10 @@ std::unique_ptr<nxrt::gfx::Renderer> g_gfx_renderer;
 [[noreturn]] void die(const char* fmt, const char* a = "", const char* b = "") {
     NXLOG_E("boot", fmt, a, b);
     nxrt::log_flush();
-    std::fprintf(stderr, "pkp: ");
+    std::fprintf(stderr, GAME_ID ": ");
     std::fprintf(stderr, fmt, a, b);
     std::fprintf(stderr, "\n");
-#ifdef PKP_GUI_SUBSYSTEM
+#ifdef GAME_GUI_SUBSYSTEM
     char msg[1024];     // a double-clicked exe has no console: say what is wrong in a box
     std::snprintf(msg, sizeof msg, fmt, a, b);
     MessageBoxA(nullptr, msg, nxrt::game::info().title, MB_OK | MB_ICONERROR);
@@ -274,31 +274,28 @@ int prepare_shaders_main(bool if_needed, int threads, const std::string& program
 
 }  // namespace
 
-#ifdef PKP_RT_DLL
-extern "C" int pkp_rt_main(int argc, char** argv, const PkpRtModules* mods) {
-    if (!mods || mods->size != sizeof(PkpRtModules) || mods->api != PKP_RT_API) {
-        MessageBoxA(nullptr, "pkp.exe and pkp_rt.dll come from different releases. Run the launcher's Set up again.", "Pokopia", MB_OK | MB_ICONERROR);
+#ifdef GAME_AS_DLL
+extern "C" int game_rt_main(int argc, char** argv, const GameRtModules* mods) {
+    if (!mods || mods->size != sizeof(GameRtModules) || mods->api != GAME_RT_API || mods->count != sizeof(kModules) / sizeof(kModules[0])) {
+        MessageBoxA(nullptr, GAME_EXE " and " GAME_RT_DLL " come from different releases. Run the launcher's Set up again.", GAME_SHORT_TITLE, MB_OK | MB_ICONERROR);
         return 3;
     }
-    kModules[0].nx = mods->rtld; kModules[0].abi = mods->rtld_abi;
-    kModules[1].nx = mods->main; kModules[1].abi = mods->main_abi;
-    kModules[2].nx = mods->sdk; kModules[2].abi = mods->sdk_abi;
-    kModules[3].nx = mods->subsdk0; kModules[3].abi = mods->subsdk0_abi;
+    for (uint32_t i = 0; i < mods->count; i++) { kModules[i].nx = mods->mods[i]; kModules[i].abi = mods->abis[i]; }
 #else
 int main(int argc, char** argv) {
 #endif
-    nxrt_register_game_pkp();      // before anything reads it (nxrt::init, play mode, the services, the test tooling): docs/GAME_BOUNDARY.md
-#ifdef PKP_GUI_SUBSYSTEM
-    // Started from a terminal: show the output there. When the output is redirected to a file or a pipe (pkp --version > v.txt), leave it alone.
+    GAME_REGISTER();      // before anything reads it (nxrt::init, play mode, the services, the test tooling): docs/GAME_BOUNDARY.md
+#ifdef GAME_GUI_SUBSYSTEM
+    // Started from a terminal: show the output there. When the output is redirected to a file or a pipe (<game> --version > v.txt), leave it alone.
     const HANDLE out_handle = GetStdHandle(STD_OUTPUT_HANDLE);
     if ((!out_handle || out_handle == INVALID_HANDLE_VALUE) && AttachConsole(ATTACH_PARENT_PROCESS)) {
         std::freopen("CONOUT$", "w", stdout);
         std::freopen("CONOUT$", "w", stderr);
     }
 #endif
-    std::string exefs = std::getenv("PKP_EXEFS") ? std::getenv("PKP_EXEFS") : PKP_EXEFS_DEFAULT;
-    bool exefs_given = std::getenv("PKP_EXEFS") != nullptr;
-    std::string game = std::getenv("PKP_GAME") ? std::getenv("PKP_GAME") : "";
+    std::string exefs = std::getenv(GAME_ENV("EXEFS")) ? std::getenv(GAME_ENV("EXEFS")) : GAME_EXEFS_DEFAULT;
+    bool exefs_given = std::getenv(GAME_ENV("EXEFS")) != nullptr;
+    std::string game = std::getenv(GAME_ENV("GAME")) ? std::getenv(GAME_ENV("GAME")) : "";
     const char* ini = nullptr;
     const char* logp = nullptr;
     bool prepare = false, prepare_if_needed = false;      // --prepare-shaders [--if-needed] [--threads N]: compile the game's shaders ahead and exit (no game start)
@@ -313,7 +310,7 @@ int main(int argc, char** argv) {
         else if (arg("--log")) logp = argv[++i];
         else if (arg("--max-seconds")) boot_opts.emplace_back("max_seconds", argv[++i]);
         else if (arg("--link")) boot_opts.emplace_back("link", argv[++i]);
-        else if (!std::strcmp(argv[i], "--version")) { std::printf("pkp %s\n", PKP_VERSION); return 0; }
+        else if (!std::strcmp(argv[i], "--version")) { std::printf(GAME_ID " %s\n", GAME_RELEASE_VERSION); return 0; }
         else if (!std::strcmp(argv[i], "--prepare-shaders")) { prepare = true; _putenv("NXRT_DIAG_WATCHDOG_SECONDS=0"); }
         else if (!std::strcmp(argv[i], "--if-needed")) prepare_if_needed = true;
         else if (arg("--threads")) prepare_threads = std::atoi(argv[++i]);
@@ -321,7 +318,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-nvn")) boot_opts.emplace_back("nvn", "0");
         else if (!std::strcmp(argv[i], "--headless")) boot_opts.emplace_back("gfx", "headless");
         else if (!std::strcmp(argv[i], "--window")) boot_opts.emplace_back("gfx", "window");
-        else { std::fprintf(stderr, "pkp: unknown argument %s\n", argv[i]); return 2; }
+        else { std::fprintf(stderr, GAME_ID ": unknown argument %s\n", argv[i]); return 2; }
     }
 
     // Installed layout: work from the game folder (see the file comment).
@@ -343,12 +340,12 @@ int main(int argc, char** argv) {
                 full.resize(GetFullPathNameW(base.c_str(), static_cast<DWORD>(full.size()), full.data(), nullptr));
                 unsigned long long h = 1469598103934665603ull;
                 for (wchar_t ch : full) h = (h ^ static_cast<unsigned long long>(std::towlower(ch))) * 1099511628211ull;
-                const std::wstring name = L"Local\\PokopiaRecompPC_" + std::to_wstring(h);
+                const std::wstring name = L"Local\\" + widen_utf8(GAME_SAVE_FOLDER) + L"_" + std::to_wstring(h);
                 if (CreateMutexW(nullptr, FALSE, name.c_str()) && GetLastError() == ERROR_ALREADY_EXISTS)
                     die("The game is already running from this folder (or its shaders are being prepared). Close that one first.");
             }
-            if (!logp) logp = "pkp.log";
-            const char* game_ini = nxrt::game::info().game_ini;     // "pkp.ini", written by setup
+            if (!logp) logp = GAME_LOG;
+            const char* game_ini = nxrt::game::info().game_ini;     // the manifest's ini, written by setup
             if (!ini && !std::getenv("NXRT_INI") && *game_ini && file_exists(std::wstring(game_ini, game_ini + std::strlen(game_ini)))) ini = game_ini;
         }
     }
@@ -358,13 +355,13 @@ int main(int argc, char** argv) {
     opt.log_path = logp;
     if (!nxrt::init(opt)) die("runtime start-up failed (address-space layout)");
     for (const auto& kv : boot_opts) nxrt::config_set("boot", kv.first.c_str(), kv.second.c_str());
-    if (installed && !nxrt::config_has("fs", "romfs")) nxrt::config_set("fs", "romfs", "romfs");   // pkp.ini missing or without [fs]
-    // [fs] exefs (pkp.ini, or NXRT_FS_EXEFS) names the ExeFS when neither --exefs nor PKP_EXEFS does; installed: relative to the game folder.
+    if (installed && !nxrt::config_has("fs", "romfs")) nxrt::config_set("fs", "romfs", "romfs");   // the ini missing or without [fs]
+    // [fs] exefs (the game ini, or NXRT_FS_EXEFS) names the ExeFS when neither --exefs nor <ID>_EXEFS does; installed: relative to the game folder.
     if (!exefs_given) exefs = nxrt::config_get_str("fs", "exefs", installed ? "exefs" : exefs.c_str());
     nxrt::config_set("fs", "exefs", exefs.c_str());     // the one in use, for the About page
-    nxrt::config_set("process", "program_id", "0x0400A3A01EE4C000");     // GetInfo(ProgramId); an ini value or the environment still wins
-    NXLOG_I("boot", "pkp %s (Pokémon Pokopia PC port)", PKP_VERSION);
-    NXLOG_I("boot", "Pokémon Pokopia %s: exefs '%s'", nxrt::game::info().version, exefs.c_str());
+    nxrt::config_set("process", "program_id", "0x" GAME_TITLE_ID);     // GetInfo(ProgramId); an ini value or the environment still wins
+    NXLOG_I("boot", GAME_ID " %s (%s PC port)", GAME_RELEASE_VERSION, GAME_TITLE);
+    NXLOG_I("boot", "%s %s: exefs '%s'", GAME_TITLE, nxrt::game::info().version, exefs.c_str());
 
     if (prepare) return prepare_shaders_main(prepare_if_needed, prepare_threads, prepare_programs);
 
@@ -384,7 +381,7 @@ int main(int argc, char** argv) {
                 wd.title = nxrt::game::info().title;
                 wd.width = disp.width;
                 wd.height = disp.height;
-                if (!nxrt::platform::create_window(wd)) die("cannot create the game window. The game needs a graphics driver with Vulkan 1.3: update the driver for your graphics card and try again. The reason is in pkp.log.");
+                if (!nxrt::platform::create_window(wd)) die("cannot create the game window. The game needs a graphics driver with Vulkan 1.3: update the driver for your graphics card and try again. The reason is in " GAME_LOG ".");
             }
             nxrt::gfx::DeviceDesc dd;
             dd.headless = headless ? 1 : 0;
@@ -429,7 +426,7 @@ int main(int argc, char** argv) {
         std::string err;
         const std::string path = exefs + "\\" + g.file;
         if (!file_exists(widen_utf8(path)))
-            die("The game files were not found (%s). Choose your game files in the Pokopia launcher (or set [fs] exefs in pkp.ini), then start the game again.", path.c_str());
+            die("The game files were not found (%s). Choose your game files in the " GAME_SHORT_TITLE " launcher (or set [fs] exefs in " GAME_INI "), then start the game again.", path.c_str());
         nxrt::Module* m = nxrt::module_load_nso_file(path.c_str(), lo, &err);
         if (!m) die("cannot load %s: %s", path.c_str(), err.c_str());
         if (m->base() != g.nx->base) die("module %s is mapped at a base different from the one the library was lifted for", g.file);
@@ -474,7 +471,7 @@ int main(int argc, char** argv) {
     if (!h) die("cannot create the main thread");
     ::Ctx* ctx = nxrt::kernel::current_ctx();
 
-    // SDK 20's rtld is lifted whole (recomp/games/pkp/config.py extra_entries: the entry at 0 and the three callbacks it hands to
+    // SDK 20's rtld is lifted whole (the game's recomp config.py extra_entries: the entry at 0 and the three callbacks it hands to
     // nn::init::Start), so no host stand-ins are needed; refuse a library lifted without them.
     if (!nxrt::fn_lookup(kModules[0].base)) die("the lifted rtld has no function at its entry: rebuild the game libraries");
 

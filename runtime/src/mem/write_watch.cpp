@@ -43,6 +43,9 @@ struct Region {
     uint64_t nwords = 0;
     std::unique_ptr<std::atomic<uint64_t>[]> prot, valid, written, ban;
     std::unique_ptr<std::atomic<uint64_t>[]> guard;     // PAGE_NOACCESS because of guard() (a subset of prot)
+    std::unique_ptr<std::atomic<uint64_t>[]> wsum;      // one bit per word of `written` that may be non-zero (set after the written bit):
+                                                        // take_written visits only those (the texture tracker's region is the whole heap)
+    uint64_t nsum = 0;
     int slot = -1;
     SRWLOCK lock = SRWLOCK_INIT;
     std::unique_ptr<std::atomic<uint16_t>[]> releasing;   // per page: releasers that saw it armed and have not finished its VirtualProtect (release_page)
@@ -68,6 +71,7 @@ std::atomic<int> g_hi{0};              // slots [0, g_hi) may be in use
 std::atomic<int> g_busy{0};            // fault handlers and os-write calls looking at the table
 std::atomic<int> g_live{0};
 std::atomic<uint64_t> g_faults{0};
+std::atomic<uint64_t> g_prot_epoch{0};   // memory.cpp mapping / protection changes (protection_changed)
 std::atomic<uint64_t> g_waits{0};      // rounds a fault waited for another releaser (statistics, tests)
 std::atomic<uint64_t> g_guard_faults{0};   // accesses that hit a guarded page
 std::atomic<GuardHandler> g_guard_fn{nullptr};
@@ -157,6 +161,7 @@ bool release_page(Region* r, uint64_t page) {
     const uint64_t old = r->prot[w].fetch_and(~b, std::memory_order_acq_rel);
     r->valid[w].fetch_and(~b, std::memory_order_acq_rel);
     r->written[w].fetch_or(b, std::memory_order_acq_rel);
+    r->wsum[w >> 6].fetch_or(uint64_t{1} << (w & 63), std::memory_order_acq_rel);
     const uint64_t addr = r->base + page * kPage;
     if (old & b) {
         bool ok = true;
@@ -354,6 +359,9 @@ Region* region_create(uint64_t addr, uint64_t size) {
         bm->reset(new std::atomic<uint64_t>[r->nwords]);
         for (uint64_t i = 0; i < r->nwords; ++i) (*bm)[i].store(0, std::memory_order_relaxed);
     }
+    r->nsum = (r->nwords + 63) / 64;
+    r->wsum.reset(new std::atomic<uint64_t>[r->nsum]);
+    for (uint64_t i = 0; i < r->nsum; ++i) r->wsum[i].store(0, std::memory_order_relaxed);
     r->releasing.reset(new std::atomic<uint16_t>[r->npages]);
     for (uint64_t i = 0; i < r->npages; ++i) r->releasing[i].store(0, std::memory_order_relaxed);
     {
@@ -413,17 +421,44 @@ void region_destroy(Region* r) {
 uint64_t region_base(const Region* r) { return r ? r->base : 0; }
 uint64_t region_pages(const Region* r) { return r ? r->npages : 0; }
 
+// No other region (the texture tracker covers the whole heap, pool mirrors overlap it) has a page of [a, a + n) armed or is releasing one:
+// the page table can then stand in for VirtualQuery, which would show such a page read-only. An arm by the other region after this check
+// leaves both armed, which a fault releases in both.
+bool others_quiet(const Region* self, uint64_t a, uint64_t n) {
+    const int hi = g_hi.load(std::memory_order_seq_cst);
+    for (int i = 0; i < hi; ++i) {
+        const Region* o = g_slots[i].load(std::memory_order_seq_cst);
+        if (!o || o == self) continue;
+        const uint64_t lo = std::max(a, o->base), end = std::min(a + n, o->base + o->npages * kPage);
+        if (lo >= end) continue;
+        const uint64_t f = (lo - o->base) / kPage, c = (end - 1 - o->base) / kPage - f + 1;
+        if (any_set(o->prot.get(), f, c)) return false;
+        for (uint64_t q = f; q < f + c; ++q)
+            if (o->releasing[q].load(std::memory_order_seq_cst)) return false;
+    }
+    return true;
+}
+
 bool arm(Region* r, uint64_t first, uint64_t count) {
     if (!r || !count || first >= r->npages || count > r->npages - first) return false;
     nxrt::HitchTimer ht(nxrt::kHpWwArm);
+    const uint64_t a = r->base + first * kPage, n = count * kPage;
+    // Whether the guest left every page committed read-write, from memory.cpp's page table when the range is in the heap view (read before
+    // the region lock: memory.cpp takes region locks while it holds its own). One VirtualQuery inside a pool's section view costs ~2.4 ms (it
+    // walks the view's page attributes), and the render thread arms 200-400 pages a second while the game loads. A change of mapping or
+    // protection after the read is either still in its scope (os_write_overlaps below) or has moved the epoch: then VirtualQuery decides.
+    const uint64_t epoch = g_prot_epoch.load(std::memory_order_acquire);
+    const int table = heap_rw_state(a, n);
     ExclusiveLock lk(r);
     if (any_set(r->ban.get(), first, count)) return false;
-    const uint64_t a = r->base + first * kPage, n = count * kPage;
     // A file read (or a mapping change in memory.cpp) into these pages is in progress: leave them alone. Its scope is published before it
     // releases pages under the shared lock, so either this sees it, or its release waits for this arm and undoes it.
     if (os_write_overlaps(a, a + n)) return false;
+    const bool known = table >= 0 && g_prot_epoch.load(std::memory_order_acquire) == epoch && !any_set(r->guard.get(), first, count) &&
+                       others_quiet(r, a, n);
+    if (known && table == 0) return false;
     // every page committed read-write (the guest may have changed a protection; a page it made read-only is not ours to take)
-    for (uint64_t cur = a; cur < a + n;) {
+    for (uint64_t cur = known ? a + n : a; cur < a + n;) {
         MEMORY_BASIC_INFORMATION mbi{};
         if (VirtualQuery(reinterpret_cast<void*>(cur), &mbi, sizeof mbi) != sizeof mbi || mbi.State != MEM_COMMIT) return false;
         const DWORD pr = mbi.Protect & 0xff;
@@ -444,6 +479,8 @@ bool arm(Region* r, uint64_t first, uint64_t count) {
     }
     return true;
 }
+
+void protection_changed(const void*, uint64_t) { g_prot_epoch.fetch_add(1, std::memory_order_acq_rel); }
 
 bool all_valid(const Region* r, uint64_t first, uint64_t count) {
     if (!r || !count || first >= r->npages || count > r->npages - first) return false;
@@ -494,14 +531,22 @@ uint64_t guard_faults() { return g_guard_faults.load(std::memory_order_relaxed);
 
 void take_written(Region* r, std::vector<uint64_t>& out) {
     if (!r) return;
-    for (uint64_t w = 0; w < r->nwords; ++w) {
-        if (!r->written[w].load(std::memory_order_relaxed)) continue;
-        uint64_t v = r->written[w].exchange(0, std::memory_order_acq_rel);
-        while (v) {
-            const unsigned long b = static_cast<unsigned long>(__builtin_ctzll(v));
-            v &= v - 1;
-            const uint64_t page = w * 64 + b;
-            if (page < r->npages) out.push_back(page);
+    // the summary word first, then the written words it names: a writer sets its written bit before the summary bit, so a bit set after
+    // this exchange is either taken below or still marked in the summary for the next call
+    for (uint64_t sw = 0; sw < r->nsum; ++sw) {
+        if (!r->wsum[sw].load(std::memory_order_relaxed)) continue;
+        uint64_t sv = r->wsum[sw].exchange(0, std::memory_order_acq_rel);
+        while (sv) {
+            const uint64_t w = sw * 64 + static_cast<uint64_t>(__builtin_ctzll(sv));
+            sv &= sv - 1;
+            if (w >= r->nwords) continue;
+            uint64_t v = r->written[w].exchange(0, std::memory_order_acq_rel);
+            while (v) {
+                const unsigned long b = static_cast<unsigned long>(__builtin_ctzll(v));
+                v &= v - 1;
+                const uint64_t page = w * 64 + b;
+                if (page < r->npages) out.push_back(page);
+            }
         }
     }
 }
@@ -591,6 +636,7 @@ void forget(uint64_t addr, uint64_t size, bool ban) {
             if (test(r->prot.get(), q)) release_page(r, q);
         set_bits(r->valid.get(), first, count, false);
         set_bits(r->written.get(), first, count, true);
+        for (uint64_t w = first >> 6; w <= (first + count - 1) >> 6; ++w) r->wsum[w >> 6].fetch_or(uint64_t{1} << (w & 63), std::memory_order_acq_rel);
     });
 }
 

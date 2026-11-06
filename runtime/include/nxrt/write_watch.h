@@ -41,6 +41,9 @@ void invalidate(Region* r, uint64_t first, uint64_t count);
 // Owner: appends the pages written by the CPU since the last call (page indices) and clears that record.
 void take_written(Region* r, std::vector<uint64_t>& out);
 
+// memory.cpp, inside its OsWriteScope, before it changes the mapping or protection of [p, p + n): an arm() that read memory.cpp's page
+// table before this asks VirtualQuery instead.
+void protection_changed(const void* p, uint64_t n);
 // Any thread: the operating system is about to write [p, p + n) (a file read into guest memory): armed pages in the range become writable
 // and count as written. Cheap when no region exists.
 void before_os_write(const void* p, uint64_t n);

@@ -26,7 +26,8 @@
 #include "nxrt/tt.h"
 #include "tt_internal.h"
 
-namespace nxrt::gfx { void wait_screenshot_writes(); }
+// Set by the gfx library when it is linked (screenshots are written on its worker); core links without gfx.
+namespace nxrt::tt { void (*wait_shot_writes)() = nullptr; }
 
 namespace nxrt::tt {
 namespace detail {
@@ -665,7 +666,7 @@ void end_run(int code, const char* verdict, const std::string& message) {
         flush_files(s);
         if (s.trace) std::fflush(s.trace);
     }
-    nxrt::gfx::wait_screenshot_writes();   // shots are written on a worker
+    if (nxrt::tt::wait_shot_writes) nxrt::tt::wait_shot_writes();   // shots are written on a worker
     ExitFn fn = s.exit_fn ? s.exit_fn : default_exit;
     fn(code);
 }

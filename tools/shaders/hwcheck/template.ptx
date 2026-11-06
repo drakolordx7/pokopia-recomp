@@ -1,0 +1,38 @@
+// Kernel template for the hardware oracle (tools/shaders/hwcheck). Only its ELF shell is used: hwcheck replaces the whole
+// .text.hw section with its own SASS (Cuda.cs, BuildKernel). The body is long so the section has room for that code.
+.version 8.0
+.target sm_86
+.address_size 64
+.visible .entry hw(.param .u64 p)
+{
+  .reg .b32 r<24>; .reg .b64 rd<6>;
+  .shared .align 16 .b8 sbuf[32768];   // memory tests (Mem.cs): shared memory at address 0
+  .local .align 16 .b8 lbuf[2048];     // and a 2 KB local frame
+  ld.param.u64 rd0, [p];
+  cvta.to.global.u64 rd0, rd0;
+  mov.u32 r0, %tid.x;
+  mul.wide.u32 rd1, r0, 72;
+  add.s64 rd2, rd0, rd1;
+  ld.global.v4.u32 {r1,r2,r3,r4}, [rd2];
+  ld.global.v4.u32 {r5,r6,r7,r8}, [rd2+16];
+  ld.global.v4.u32 {r9,r10,r11,r12}, [rd2+32];
+  ld.global.v4.u32 {r13,r14,r15,r16}, [rd2+48];
+  ld.global.u32 r17, [rd2+64];
+  mad.lo.u32 r1, r1, r17, r2;  mad.lo.u32 r2, r2, r1, r3;  mad.lo.u32 r3, r3, r2, r4;  mad.lo.u32 r4, r4, r3, r5;
+  mad.lo.u32 r5, r5, r4, r6;  mad.lo.u32 r6, r6, r5, r7;  mad.lo.u32 r7, r7, r6, r8;  mad.lo.u32 r8, r8, r7, r9;
+  mad.lo.u32 r9, r9, r8, r10;  mad.lo.u32 r10, r10, r9, r11;  mad.lo.u32 r11, r11, r10, r12;  mad.lo.u32 r12, r12, r11, r13;
+  mad.lo.u32 r13, r13, r12, r14;  mad.lo.u32 r14, r14, r13, r15;  mad.lo.u32 r15, r15, r14, r16;  mad.lo.u32 r16, r16, r15, r1;
+  mad.lo.u32 r1, r1, r16, r2;  mad.lo.u32 r2, r2, r1, r3;  mad.lo.u32 r3, r3, r2, r4;  mad.lo.u32 r4, r4, r3, r5;
+  mad.lo.u32 r5, r5, r4, r6;  mad.lo.u32 r6, r6, r5, r7;  mad.lo.u32 r7, r7, r6, r8;  mad.lo.u32 r8, r8, r7, r9;
+  mad.lo.u32 r9, r9, r8, r10;  mad.lo.u32 r10, r10, r9, r11;  mad.lo.u32 r11, r11, r10, r12;  mad.lo.u32 r12, r12, r11, r13;
+  mad.lo.u32 r13, r13, r12, r14;  mad.lo.u32 r14, r14, r13, r15;  mad.lo.u32 r15, r15, r14, r16;  mad.lo.u32 r16, r16, r15, r1;
+  st.global.v4.u32 [rd2], {r1,r2,r3,r4};
+  st.global.v4.u32 [rd2+16], {r5,r6,r7,r8};
+  st.global.v4.u32 [rd2+32], {r9,r10,r11,r12};
+  st.global.v4.u32 [rd2+48], {r13,r14,r15,r16};
+  st.global.u32 [rd2+64], r17;
+  and.b32 r18, r16, 32752; mov.u32 r19, sbuf; add.u32 r19, r19, r18; st.volatile.shared.u32 [r19], r1; ld.volatile.shared.u32 r20, [r19];
+  mov.u64 rd3, lbuf; cvta.local.u64 rd3, rd3; cvta.to.local.u64 rd3, rd3; cvt.u32.u64 r21, rd3; and.b32 r22, r15, 2044; add.u32 r21, r21, r22;
+  st.local.u32 [r21], r2; and.b32 r22, r14, 2044; sub.u32 r21, r21, r22; ld.local.u32 r23, [r21]; add.u32 r20, r20, r23; st.global.u32 [rd2+68], r20;
+  ret;
+}

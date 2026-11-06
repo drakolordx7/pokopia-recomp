@@ -141,6 +141,7 @@ uint64_t record_cost(Op op, uint32_t blob_size) {
     switch (op) {
     case Op::Nop: case Op::CallCommands: return 0;   // a call is a control entry (small lists are copied in: not counted)
     case Op::PushDebugGroup: case Op::PopDebugGroup: return 8;
+    case Op::EvaluateDlss: return 288 + 40;   // the sdk's packet is 288 bytes (sub_5E07F8(cmd, .., 288) in nvnCommandBufferEvaluateDlss) plus two marker words
     default: return 8 + ((static_cast<uint64_t>(blob_size) + 3u) & ~3ull);
     }
 }

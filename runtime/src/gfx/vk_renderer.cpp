@@ -22,6 +22,8 @@
 #include "extras/win_display.h"
 #include "vk_gauges.h"
 
+namespace nxrt::tt { extern void (*wait_shot_writes)(); }   // tt_core.cpp
+
 namespace nxrt::gfx {
 namespace {
 constexpr const char* kTag = "gfx";
@@ -94,6 +96,7 @@ std::atomic<int> g_png_writes{0};   // screenshots requested and not yet written
 void wait_screenshot_writes() {
     for (int i = 0; i < 1500 && g_png_writes.load() > 0; i++) std::this_thread::sleep_for(std::chrono::milliseconds(10));
 }
+const bool g_wait_hook_set = (nxrt::tt::wait_shot_writes = wait_screenshot_writes, true);
 
 bool save_png_rgba(const std::string& path, const uint8_t* rgba, uint32_t w, uint32_t h) {
     SDL_Surface* s = SDL_CreateSurfaceFrom(static_cast<int>(w), static_cast<int>(h), SDL_PIXELFORMAT_RGBA32, const_cast<uint8_t*>(rgba),

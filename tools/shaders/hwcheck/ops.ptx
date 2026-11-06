@@ -1,0 +1,212 @@
+// Instruction source for the hardware oracle (tools/shaders/hwcheck): the ALU forms we want encodings of, written in PTX
+// and compiled by ptxas -arch=sm_86. hwcheck harvests the SASS words of the compiled kernel (cuobjdump -sass), so these
+// encodings are NVIDIA compiler output from our own source. Inputs come from memory so nothing folds; every result is stored.
+.version 8.0
+.target sm_86
+.address_size 64
+.visible .entry ops(.param .u64 p)
+{
+  .reg .b32 a, b, c, tmp, ha, hb, hc; .reg .f32 fa, fb, fc; .reg .f64 da, db, dc; .reg .b64 la, lb, lc, rd<4>;
+  .reg .b16 hl, hh; .reg .s16 sl; .reg .u32 ul8; .reg .pred pa, pb, pt; .reg .u32 t;
+  ld.param.u64 rd0, [p];
+  cvta.to.global.u64 rd0, rd0;
+  mov.u32 t, %tid.x;
+  mul.wide.u32 rd1, t, 64;
+  add.s64 rd2, rd0, rd1;
+  ld.global.u32 a, [rd2]; ld.global.u32 b, [rd2+4]; ld.global.u32 c, [rd2+8];
+  ld.global.u32 ha, [rd2+12]; ld.global.u32 hb, [rd2+16]; ld.global.u32 hc, [rd2+20];
+  ld.global.f32 fa, [rd2+24]; ld.global.f32 fb, [rd2+28]; ld.global.f32 fc, [rd2+32];
+  ld.global.f64 da, [rd2+40]; ld.global.f64 db, [rd2+48]; ld.global.f64 dc, [rd2+56];
+  mov.b64 la, da; mov.b64 lb, db; mov.b64 lc, dc;
+  mov.b32 {hl, hh}, ha; cvt.u16.u32 sl, b; and.b32 ul8, c, 255;
+  setp.ne.u32 pa, a, 0; setp.lt.u32 pb, b, c;
+  { .reg .f32 d; add.f32 d, fa, fb; st.global.f32 [rd2+0], d; }
+  { .reg .f32 d; add.ftz.f32 d, fa, fb; st.global.f32 [rd2+8], d; }
+  { .reg .f32 d; add.rz.f32 d, fa, fb; st.global.f32 [rd2+16], d; }
+  { .reg .f32 d; add.rm.ftz.f32 d, fa, fb; st.global.f32 [rd2+24], d; }
+  { .reg .f32 d; sub.rp.f32 d, fa, fb; st.global.f32 [rd2+32], d; }
+  { .reg .f32 d; add.sat.f32 d, fa, fb; st.global.f32 [rd2+40], d; }
+  { .reg .f32 d; mul.f32 d, fa, fb; st.global.f32 [rd2+48], d; }
+  { .reg .f32 d; mul.ftz.f32 d, fa, fb; st.global.f32 [rd2+56], d; }
+  { .reg .f32 d; mul.rz.ftz.f32 d, fa, fb; st.global.f32 [rd2+64], d; }
+  { .reg .f32 d; mul.sat.f32 d, fa, fb; st.global.f32 [rd2+72], d; }
+  { .reg .f32 d; fma.rn.f32 d, fa, fb, fc; st.global.f32 [rd2+80], d; }
+  { .reg .f32 d; fma.rn.ftz.f32 d, fa, fb, fc; st.global.f32 [rd2+88], d; }
+  { .reg .f32 d; fma.rz.f32 d, fa, fb, fc; st.global.f32 [rd2+96], d; }
+  { .reg .f32 d; fma.rn.sat.f32 d, fa, fb, fc; st.global.f32 [rd2+104], d; }
+  { .reg .f32 d; fma.rn.f32 d, fa, 0f3F000000, fc; st.global.f32 [rd2+112], d; }
+  { .reg .f32 d; fma.rm.f32 d, fa, fb, fc; st.global.f32 [rd2+120], d; }
+  { .reg .f32 d; fma.rp.f32 d, fa, fb, fc; st.global.f32 [rd2+128], d; }
+  { .reg .f32 d; min.f32 d, fa, fb; st.global.f32 [rd2+136], d; }
+  { .reg .f32 d; max.ftz.f32 d, fa, fb; st.global.f32 [rd2+144], d; }
+  { .reg .f32 d; min.NaN.f32 d, fa, fb; st.global.f32 [rd2+152], d; }
+  { .reg .f32 d; max.xorsign.abs.f32 d, fa, fb; st.global.f32 [rd2+160], d; }
+  { .reg .f32 d; abs.f32 d, fa; st.global.f32 [rd2+168], d; }
+  { .reg .f32 d; neg.ftz.f32 d, fa; st.global.f32 [rd2+176], d; }
+  { .reg .pred d; setp.lt.f32 d, fa, fb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+184], t; }
+  { .reg .pred d; setp.gtu.ftz.f32 d, fa, fb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+192], t; }
+  { .reg .pred d; setp.num.f32 d, fa, fb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+200], t; }
+  { .reg .pred d; setp.nan.f32 d, fa, fb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+208], t; }
+  { .reg .pred d; setp.equ.f32 d, fa, fb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+216], t; }
+  { .reg .u32 d; set.ge.u32.f32 d, fa, fb; st.global.u32 [rd2+224], d; }
+  { .reg .f32 d; set.neu.f32.f32 d, fa, fb; st.global.f32 [rd2+232], d; }
+  { .reg .f32 d; cvt.rni.f32.f32 d, fa; st.global.f32 [rd2+240], d; }
+  { .reg .f32 d; cvt.rmi.f32.f32 d, fa; st.global.f32 [rd2+248], d; }
+  { .reg .f32 d; cvt.rpi.ftz.f32.f32 d, fa; st.global.f32 [rd2+256], d; }
+  { .reg .f32 d; cvt.rzi.f32.f32 d, fa; st.global.f32 [rd2+264], d; }
+  { .reg .f32 d; sin.approx.f32 d, fa; st.global.f32 [rd2+272], d; }
+  { .reg .f32 d; cos.approx.ftz.f32 d, fa; st.global.f32 [rd2+280], d; }
+  { .reg .f32 d; ex2.approx.f32 d, fa; st.global.f32 [rd2+288], d; }
+  { .reg .f32 d; ex2.approx.ftz.f32 d, fa; st.global.f32 [rd2+296], d; }
+  { .reg .f32 d; lg2.approx.f32 d, fa; st.global.f32 [rd2+304], d; }
+  { .reg .f32 d; rsqrt.approx.f32 d, fa; st.global.f32 [rd2+312], d; }
+  { .reg .f32 d; rsqrt.approx.ftz.f32 d, fa; st.global.f32 [rd2+320], d; }
+  { .reg .f32 d; sqrt.approx.f32 d, fa; st.global.f32 [rd2+328], d; }
+  { .reg .f32 d; rcp.approx.f32 d, fa; st.global.f32 [rd2+336], d; }
+  { .reg .f32 d; rcp.approx.ftz.f32 d, fa; st.global.f32 [rd2+344], d; }
+  { .reg .f32 d; tanh.approx.f32 d, fa; st.global.f32 [rd2+352], d; }
+  { .reg .b16 d; ex2.approx.f16 d, hl; st.global.b16 [rd2+360], d; }
+  { .reg .b16 d; tanh.approx.f16 d, hl; st.global.b16 [rd2+368], d; }
+  { .reg .s32 d; cvt.rzi.s32.f32 d, fa; st.global.s32 [rd2+376], d; }
+  { .reg .u32 d; cvt.rni.u32.f32 d, fa; st.global.u32 [rd2+384], d; }
+  { .reg .s32 d; cvt.rmi.ftz.s32.f32 d, fa; st.global.s32 [rd2+392], d; }
+  { .reg .u32 d; cvt.rpi.u32.f32 d, fa; st.global.u32 [rd2+400], d; }
+  { .reg .u16 d; cvt.rzi.u16.f32 d, fa; st.global.u16 [rd2+408], d; }
+  { .reg .s16 d; cvt.rni.s16.f32 d, fa; st.global.s16 [rd2+416], d; }
+  { .reg .s64 d; cvt.rzi.s64.f32 d, fa; st.global.s64 [rd2+424], d; }
+  { .reg .u64 d; cvt.rni.u64.f64 d, da; st.global.u64 [rd2+432], d; }
+  { .reg .s32 d; cvt.rzi.s32.f64 d, da; st.global.s32 [rd2+440], d; }
+  { .reg .f32 d; cvt.rn.f32.s32 d, a; st.global.f32 [rd2+448], d; }
+  { .reg .f32 d; cvt.rz.f32.u32 d, a; st.global.f32 [rd2+456], d; }
+  { .reg .f32 d; cvt.rm.f32.s16 d, sl; st.global.f32 [rd2+464], d; }
+  { .reg .f32 d; cvt.rn.f32.u32 d, ul8; st.global.f32 [rd2+472], d; }
+  { .reg .f32 d; cvt.rn.f32.s64 d, la; st.global.f32 [rd2+480], d; }
+  { .reg .f64 d; cvt.rn.f64.s32 d, a; st.global.f64 [rd2+488], d; }
+  { .reg .b16 d; cvt.rn.f16.f32 d, fa; st.global.b16 [rd2+496], d; }
+  { .reg .b16 d; cvt.rz.f16.f32 d, fa; st.global.b16 [rd2+504], d; }
+  { .reg .f32 d; cvt.f32.f16 d, hl; st.global.f32 [rd2+512], d; }
+  { .reg .f32 d; cvt.rn.f32.f64 d, da; st.global.f32 [rd2+520], d; }
+  { .reg .f64 d; cvt.f64.f32 d, fa; st.global.f64 [rd2+528], d; }
+  { .reg .f32 d; cvt.ftz.sat.f32.f32 d, fa; st.global.f32 [rd2+536], d; }
+  { .reg .b32 d; cvt.rn.f16x2.f32 d, fa, fb; st.global.b32 [rd2+544], d; }
+  { .reg .b32 d; cvt.rn.relu.f16x2.f32 d, fa, fb; st.global.b32 [rd2+552], d; }
+  { .reg .b32 d; cvt.rn.bf16x2.f32 d, fa, fb; st.global.b32 [rd2+560], d; }
+  { .reg .s32 d; cvt.s8.s32 d, a; st.global.s32 [rd2+568], d; }
+  { .reg .u32 d; cvt.sat.u8.s32 d, a; st.global.u32 [rd2+576], d; }
+  { .reg .s32 d; cvt.s16.u32 d, a; st.global.s32 [rd2+584], d; }
+  { .reg .f64 d; add.f64 d, da, db; st.global.f64 [rd2+592], d; }
+  { .reg .f64 d; mul.rz.f64 d, da, db; st.global.f64 [rd2+600], d; }
+  { .reg .f64 d; fma.rn.f64 d, da, db, dc; st.global.f64 [rd2+608], d; }
+  { .reg .pred d; setp.lt.f64 d, da, db; selp.u32 t, 1, 0, d; st.global.u32 [rd2+616], t; }
+  { .reg .f64 d; min.f64 d, da, db; st.global.f64 [rd2+624], d; }
+  { .reg .b32 d; add.f16x2 d, ha, hb; st.global.b32 [rd2+632], d; }
+  { .reg .b32 d; add.ftz.sat.f16x2 d, ha, hb; st.global.b32 [rd2+640], d; }
+  { .reg .b32 d; mul.f16x2 d, ha, hb; st.global.b32 [rd2+648], d; }
+  { .reg .b32 d; fma.rn.f16x2 d, ha, hb, hc; st.global.b32 [rd2+656], d; }
+  { .reg .b32 d; fma.rn.relu.f16x2 d, ha, hb, hc; st.global.b32 [rd2+664], d; }
+  { .reg .b32 d; min.f16x2 d, ha, hb; st.global.b32 [rd2+672], d; }
+  { .reg .b32 d; max.NaN.f16x2 d, ha, hb; st.global.b32 [rd2+680], d; }
+  { .reg .b16 d; add.f16 d, hl, hh; st.global.b16 [rd2+688], d; }
+  { .reg .b32 d; set.lt.f16x2.f16x2 d, ha, hb; st.global.b32 [rd2+696], d; }
+  { .reg .b32 d; set.gtu.u32.f16x2 d, ha, hb; st.global.b32 [rd2+704], d; }
+  { .reg .b32 d; fma.rn.bf16x2 d, ha, hb, hc; st.global.b32 [rd2+712], d; }
+  { .reg .u32 d; add.u32 d, a, b; st.global.u32 [rd2+720], d; }
+  { .reg .u32 d; sub.u32 d, a, b; st.global.u32 [rd2+728], d; }
+  { .reg .s32 d; add.sat.s32 d, a, b; st.global.s32 [rd2+736], d; }
+  { .reg .u64 d; add.u64 d, la, lb; st.global.u64 [rd2+744], d; }
+  { .reg .u32 d; add.cc.u32 tmp, a, b; addc.u32 d, c, a; st.global.u32 [rd2+752], d; }
+  { .reg .u32 d; mad.lo.u32 d, a, b, c; st.global.u32 [rd2+760], d; }
+  { .reg .u32 d; mad.hi.u32 d, a, b, c; st.global.u32 [rd2+768], d; }
+  { .reg .s32 d; mad.hi.s32 d, a, b, c; st.global.s32 [rd2+776], d; }
+  { .reg .u64 d; mad.wide.u32 d, a, b, lc; st.global.u64 [rd2+784], d; }
+  { .reg .s64 d; mad.wide.s32 d, a, b, lc; st.global.s64 [rd2+792], d; }
+  { .reg .u32 d; mul.hi.u32 d, a, b; st.global.u32 [rd2+800], d; }
+  { .reg .s32 d; mul.hi.s32 d, a, b; st.global.s32 [rd2+808], d; }
+  { .reg .u32 d; mul.lo.u32 d, a, 0x12345; st.global.u32 [rd2+816], d; }
+  { .reg .u64 d; mul.lo.u64 d, la, lb; st.global.u64 [rd2+824], d; }
+  { .reg .u32 d; min.u32 d, a, b; st.global.u32 [rd2+832], d; }
+  { .reg .s32 d; max.s32 d, a, b; st.global.s32 [rd2+840], d; }
+  { .reg .s32 d; abs.s32 d, a; st.global.s32 [rd2+848], d; }
+  { .reg .s32 d; neg.s32 d, a; st.global.s32 [rd2+856], d; }
+  { .reg .u32 d; lop3.b32 d, a, b, c, 0x96; st.global.u32 [rd2+864], d; }
+  { .reg .u32 d; lop3.b32 d, a, b, c, 0xe8; st.global.u32 [rd2+872], d; }
+  { .reg .u32 d; not.b32 d, a; st.global.u32 [rd2+880], d; }
+  { .reg .u32 d; shf.l.wrap.b32 d, a, b, c; st.global.u32 [rd2+888], d; }
+  { .reg .u32 d; shf.r.clamp.b32 d, a, b, c; st.global.u32 [rd2+896], d; }
+  { .reg .u32 d; shf.r.wrap.b32 d, a, b, c; st.global.u32 [rd2+904], d; }
+  { .reg .u32 d; shf.l.clamp.b32 d, a, b, c; st.global.u32 [rd2+912], d; }
+  { .reg .u32 d; shl.b32 d, a, c; st.global.u32 [rd2+920], d; }
+  { .reg .u32 d; shr.u32 d, a, c; st.global.u32 [rd2+928], d; }
+  { .reg .s32 d; shr.s32 d, a, c; st.global.s32 [rd2+936], d; }
+  { .reg .u64 d; shl.b64 d, la, c; st.global.u64 [rd2+944], d; }
+  { .reg .s64 d; shr.s64 d, la, c; st.global.s64 [rd2+952], d; }
+  { .reg .u64 d; shr.u64 d, la, 5; st.global.u64 [rd2+960], d; }
+  { .reg .u32 d; prmt.b32 d, a, b, c; st.global.u32 [rd2+968], d; }
+  { .reg .u32 d; prmt.b32.f4e d, a, b, c; st.global.u32 [rd2+976], d; }
+  { .reg .u32 d; prmt.b32.b4e d, a, b, c; st.global.u32 [rd2+984], d; }
+  { .reg .u32 d; prmt.b32.rc8 d, a, b, c; st.global.u32 [rd2+992], d; }
+  { .reg .u32 d; prmt.b32.ecl d, a, b, c; st.global.u32 [rd2+1000], d; }
+  { .reg .u32 d; prmt.b32.ecr d, a, b, c; st.global.u32 [rd2+1008], d; }
+  { .reg .u32 d; prmt.b32.rc16 d, a, b, c; st.global.u32 [rd2+1016], d; }
+  { .reg .u32 d; bfe.u32 d, a, b, c; st.global.u32 [rd2+1024], d; }
+  { .reg .s32 d; bfe.s32 d, a, b, c; st.global.s32 [rd2+1032], d; }
+  { .reg .u32 d; bfi.b32 d, a, b, c, ul8; st.global.u32 [rd2+1040], d; }
+  { .reg .u32 d; bmsk.clamp.b32 d, a, b; st.global.u32 [rd2+1048], d; }
+  { .reg .u32 d; bmsk.wrap.b32 d, a, b; st.global.u32 [rd2+1056], d; }
+  { .reg .s32 d; szext.clamp.s32 d, a, b; st.global.s32 [rd2+1064], d; }
+  { .reg .u32 d; szext.wrap.u32 d, a, b; st.global.u32 [rd2+1072], d; }
+  { .reg .u32 d; popc.b32 d, a; st.global.u32 [rd2+1080], d; }
+  { .reg .u32 d; clz.b32 d, a; st.global.u32 [rd2+1088], d; }
+  { .reg .u32 d; bfind.u32 d, a; st.global.u32 [rd2+1096], d; }
+  { .reg .u32 d; bfind.s32 d, a; st.global.u32 [rd2+1104], d; }
+  { .reg .u32 d; bfind.shiftamt.u32 d, a; st.global.u32 [rd2+1112], d; }
+  { .reg .u32 d; brev.b32 d, a; st.global.u32 [rd2+1120], d; }
+  { .reg .u32 d; dp4a.u32.u32 d, a, b, c; st.global.u32 [rd2+1128], d; }
+  { .reg .s32 d; dp2a.lo.s32.s32 d, a, b, c; st.global.s32 [rd2+1136], d; }
+  { .reg .u32 d; sad.u32 d, a, b, c; st.global.u32 [rd2+1144], d; }
+  { .reg .s32 d; cvt.sat.s8.s32 d, a; st.global.s32 [rd2+1152], d; }
+  { .reg .u32 d; cvt.sat.u16.s32 d, a; st.global.u32 [rd2+1160], d; }
+  { .reg .s32 d; cvt.sat.s16.s32 d, a; st.global.s32 [rd2+1168], d; }
+  { .reg .s32 d; dp4a.s32.s32 d, a, b, c; st.global.s32 [rd2+1176], d; }
+  { .reg .s32 d; dp4a.u32.s32 d, a, b, c; st.global.s32 [rd2+1184], d; }
+  { .reg .u32 d; dp2a.hi.u32.u32 d, a, b, c; st.global.u32 [rd2+1192], d; }
+  { .reg .s32 d; dp2a.lo.s32.u32 d, a, b, c; st.global.s32 [rd2+1200], d; }
+  { .reg .s32 d; sad.s32 d, a, b, c; st.global.s32 [rd2+1208], d; }
+  { .reg .pred d; setp.lt.s32 d, a, b; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1216], t; }
+  { .reg .pred d; setp.hs.u32 d, a, b; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1224], t; }
+  { .reg .pred d; setp.ne.u64 d, la, lb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1232], t; }
+  { .reg .pred d; setp.lt.s64 d, la, lb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1240], t; }
+  { .reg .u32 d; selp.b32 d, a, b, pa; st.global.u32 [rd2+1248], d; }
+  { .reg .pred d; and.pred d, pa, pb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1256], t; }
+  { .reg .pred d; xor.pred d, pa, pb; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1264], t; }
+  { .reg .u32 d; shfl.sync.idx.b32 d, a, b, 0x1f, 0xffffffff; st.global.u32 [rd2+1272], d; }
+  { .reg .u32 d; shfl.sync.up.b32 d, a, 3, 0, 0xffffffff; st.global.u32 [rd2+1280], d; }
+  { .reg .u32 d; shfl.sync.down.b32 d, a, b, 0x1f, 0xffffffff; st.global.u32 [rd2+1288], d; }
+  { .reg .u32 d; shfl.sync.bfly.b32 d, a, 5, 0x1f, 0xffffffff; st.global.u32 [rd2+1296], d; }
+  { .reg .u32 d; shfl.sync.idx.b32 d|pt, a, b, c, 0xffffffff; st.global.u32 [rd2+1304], d; }
+  { .reg .pred d; vote.sync.any.pred d, pa, 0xffffffff; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1312], t; }
+  { .reg .pred d; vote.sync.all.pred d, pa, 0xffffffff; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1320], t; }
+  { .reg .pred d; vote.sync.uni.pred d, pa, 0xffffffff; selp.u32 t, 1, 0, d; st.global.u32 [rd2+1328], t; }
+  { .reg .u32 d; vote.sync.ballot.b32 d, pa, 0xffffffff; st.global.u32 [rd2+1336], d; }
+  { .reg .u32 d; match.any.sync.b32 d, a, 0xffffffff; st.global.u32 [rd2+1344], d; }
+  { .reg .u32 d; match.all.sync.b32 d|pt, a, 0xffffffff; st.global.u32 [rd2+1352], d; }
+  { .reg .u32 d; redux.sync.add.u32 d, a, 0xffffffff; st.global.u32 [rd2+1360], d; }
+  { .reg .u32 d; redux.sync.min.u32 d, a, 0xffffffff; st.global.u32 [rd2+1368], d; }
+  { .reg .s32 d; redux.sync.max.s32 d, a, 0xffffffff; st.global.s32 [rd2+1376], d; }
+  { .reg .u32 d; redux.sync.or.b32 d, a, 0xffffffff; st.global.u32 [rd2+1384], d; }
+  { .reg .u32 d; redux.sync.xor.b32 d, a, 0xffffffff; st.global.u32 [rd2+1392], d; }
+  { .reg .b32 d<2>; mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {d0,d1}, {ha,hb,hc,a}, {b,c}, {ha,hb}; st.global.v2.u32 [rd2+2800], {d0,d1}; }
+  { .reg .b32 d<2>, z; mov.b32 z, 0; mma.sync.aligned.m16n8k16.row.col.f16.f16.f16.f16 {d0,d1}, {ha,hb,hc,a}, {b,c}, {z,z}; st.global.v2.u32 [rd2+2816], {d0,d1}; }
+  { .reg .b32 d<2>; mma.sync.aligned.m16n8k8.row.col.f16.f16.f16.f16 {d0,d1}, {ha,hb}, {b}, {hc,a}; st.global.v2.u32 [rd2+2832], {d0,d1}; }
+  { .reg .f32 d<4>; mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 {d0,d1,d2,d3}, {ha,hb,hc,a}, {b,c}, {fa,fb,fc,fa}; st.global.v4.f32 [rd2+2848], {d0,d1,d2,d3}; }
+  { .reg .f32 d<4>; mma.sync.aligned.m16n8k8.row.col.f32.f16.f16.f32 {d0,d1,d2,d3}, {ha,hb}, {b}, {fa,fb,fc,fa}; st.global.v4.f32 [rd2+2864], {d0,d1,d2,d3}; }
+  { .reg .f32 d<4>; mma.sync.aligned.m16n8k16.row.col.f32.bf16.bf16.f32 {d0,d1,d2,d3}, {ha,hb,hc,a}, {b,c}, {fa,fb,fc,fa}; st.global.v4.f32 [rd2+2880], {d0,d1,d2,d3}; }
+  { .reg .b32 d<4>; ldmatrix.sync.aligned.m8n8.x4.shared.b16 {d0,d1,d2,d3}, [a]; st.global.v4.u32 [rd2+2896], {d0,d1,d2,d3}; }
+  { .reg .b32 d<4>; ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {d0,d1,d2,d3}, [a+16]; st.global.v4.u32 [rd2+2912], {d0,d1,d2,d3}; }
+  { .reg .b32 d<2>; ldmatrix.sync.aligned.m8n8.x2.shared.b16 {d0,d1}, [a+32]; st.global.v2.u32 [rd2+2928], {d0,d1}; }
+  { .reg .b32 d<2>; ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {d0,d1}, [a]; st.global.v2.u32 [rd2+2944], {d0,d1}; }
+  { .reg .b32 d; ldmatrix.sync.aligned.m8n8.x1.shared.b16 {d}, [a+64]; st.global.u32 [rd2+2960], d; }
+  { .reg .b32 d; ldmatrix.sync.aligned.m8n8.x1.trans.shared.b16 {d}, [a]; st.global.u32 [rd2+2976], d; }
+  { .reg .b32 d; movmatrix.sync.aligned.m8n8.trans.b16 d, ha; st.global.u32 [rd2+2992], d; }
+  ret;
+}

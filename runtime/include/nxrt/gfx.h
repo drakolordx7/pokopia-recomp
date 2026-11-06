@@ -119,6 +119,8 @@ struct DeviceFeatures {
     bool external_memory_host = false, push_descriptor = false;
     bool dynamic_rendering_unused_attachments = false;
     bool transform_feedback = false, transform_feedback_queries = false;   // VK_EXT_transform_feedback (the feedback queries: transformFeedbackQueries)
+    bool fragment_shading_rate = false;   // VK_KHR_fragment_shading_rate with pipelineFragmentShadingRate (NVN2 shading rate image, nvn_small.h)
+    bool conservative_raster_dynamic = false;   // VK_EXT_conservative_rasterization + the extended-dynamic-state-3 mode / overestimation size (NVN2 conservative raster)
     bool index_type_uint8 = false;        // VK_EXT/KHR_index_type_uint8 (8-bit index buffers, indexTypeUint8)
     bool debug_labels = false;            // VK_EXT_debug_utils is enabled on the instance (command buffer labels)
     bool occlusion_query = false, occlusion_query_precise = false, pipeline_statistics_query = false;
@@ -136,6 +138,8 @@ struct DeviceLimitsExt {
     uint64_t max_buffer_size = 0;
     uint32_t subgroup_size = 0, subgroup_ops = 0;
     uint32_t max_memory_allocation_count = 0;
+    float cons_max_extra = 0, cons_granularity = 0;   // VK_EXT_conservative_rasterization: maxExtraPrimitiveOverestimationSize, extraPrimitiveOverestimationSizeGranularity
+    uint32_t fsr_sizes = 0;   // VK_KHR_fragment_shading_rate: bit (log2(w) * 3 + log2(h)) = a fragment size of 1 sample the device supports (w, h in 1, 2, 4)
 };
 
 class Device {

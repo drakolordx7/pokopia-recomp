@@ -25,6 +25,8 @@
 #include <utility>
 #include <vector>
 
+#include "nvn_shader_worker.h"
+
 namespace nxrt::nvn::be {
 
 // ---- hashing ----------------------------------------------------------------------------------------------------
@@ -269,7 +271,14 @@ public:
     // loads <hash>.spv on first use and keeps the ShaderInfo for the life of the process (the pointer stays valid).
     // Null if there is no usable .spv (logged once per hash) or the control section is malformed.
     // Hashing costs a pass over the block: call it when the program is set, not per draw.
-    const ShaderInfo* find(const uint8_t* code, const uint8_t* control);
+    // On-demand translation (start_translator): a block the cache has no record of goes to the translator and find() returns null with
+    // miss->pending set (and miss->hash); call find() again once translator_state(hash) is no longer Pending. A block the translator
+    // could not translate is then an ordinary miss.
+    struct FindMiss {
+        bool pending = false;
+        std::string hash;
+    };
+    const ShaderInfo* find(const uint8_t* code, const uint8_t* control, FindMiss* miss = nullptr);
     // A ShaderInfo that find() already loaded, or null. Never loads: a ShaderInfo needs the code block (its control
     // section and constant data come from it).
     const ShaderInfo* find_by_hash(const std::string& hash);
@@ -280,6 +289,17 @@ public:
     // load_stub. Null if the hash has no usable .spv. Any thread.
     const ShaderInfo* load_stub(const std::string& hash);
     void release_stub_spirv(const ShaderInfo* s);   // frees the words; the caller guarantees nobody is using them (single threaded point)
+    // On-demand translation: a persistent spirv_harness --serve process that writes into this cache. Config [nvn] shader_translator
+    // (default <exe folder>/tools/spirv_harness/spirv_harness.exe; "off" disables), [nvn] shader_corpus (default <cache>/../corpus),
+    // [nvn] shader_translate_jobs. False (logged) when there is no harness: misses then stay misses, as before.
+    bool start_translator();
+    bool translator_on() const { return worker_ && worker_->running(); }
+    uint64_t translator_generation() const { return worker_ ? worker_->generation() : 0; }
+    ShaderTranslatorClient::State translator_state(const std::string& hash) const {
+        return worker_ ? worker_->state(hash) : ShaderTranslatorClient::State::Unknown;
+    }
+    size_t translator_pending() const { return worker_ ? worker_->pending() : 0; }
+    uint64_t translator_done() const { return worker_ ? worker_->done() : 0; }
     size_t loaded() const;   // ShaderInfos built so far
     size_t missing() const;  // hashes asked for that have no usable .spv (or do not reflect)
     bool is_open() const;
@@ -320,6 +340,9 @@ private:
     std::string order_path_;
     std::unordered_set<std::string> order_known_;                           // in the order file (lock_)
     std::string order_pending_;                                             // new lines not yet appended (lock_)
+
+    void add_record(const std::string& hash, const std::string& row);   // a row the translator appended to results.tsv
+    std::unique_ptr<ShaderTranslatorClient> worker_;
 
     mutable std::mutex lock_;
     std::string dir_;
